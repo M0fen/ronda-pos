@@ -2,7 +2,7 @@
 
 Sistema de punto de venta para cafés y bares en Colombia: mesas, comandas a barra y cocina, cobro con propina voluntaria y cuentas divididas, Nequi y Bre-B, factura electrónica, carta QR, inventario por receta, sellos para clientes, caja con arqueo ciego y el resumen del día por WhatsApp. Funciona en el navegador de la tablet o el celular que ya tiene el local.
 
-La portada (`/`) es la página de venta. La demo abre en `/entrar` con un café bar de ejemplo (Café Bar Villa Verde, Pereira) y el servicio en marcha.
+La portada (`/`) presenta el sistema. La demo abre en `/entrar` con un café bar de ejemplo (Café Bar Villa Verde, Pereira) y el servicio en marcha.
 
 ## Demo
 
@@ -48,7 +48,7 @@ Sin `DATABASE_URL` la app usa PGlite (Postgres dentro de Node) en `.data/` y sie
 ## Publicar en Vercel
 
 1. Importa el repositorio en Vercel. No hace falta configurar nada: el build (`vercel.json`) genera la base de la demo y la app la carga en memoria.
-2. Opcional: `NEXT_PUBLIC_SALES_WHATSAPP` con el número de ventas de la portada (sin ella usa el que trae `app/page.tsx`) y `SESSION_SECRET` con 32 caracteres al azar.
+2. Opcional: `NEXT_PUBLIC_SALES_WHATSAPP` con el WhatsApp de contacto de la portada (sin ella usa el que trae `app/page.tsx`) y `SESSION_SECRET` con 32 caracteres al azar.
 
 La demo en memoria se reinicia sola cuando Vercel apaga la función (tras unos minutos sin visitas) y cada copia de la función tiene sus propios datos. Para que los datos persistan, conecta una base Postgres (por ejemplo Neon desde el Marketplace de Vercel) con `DATABASE_URL`; si además pones `DEMO_MODE=true`, se siembra el café bar de ejemplo y los pagos siguen simulados.
 

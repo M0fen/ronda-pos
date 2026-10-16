@@ -3,7 +3,7 @@
 Guía para trabajar en Ronda con Claude Code. Lee también `AGENTS.md`: Next.js 16 cambió APIs; consulta `node_modules/next/dist/docs/` antes de usar algo que no conozcas.
 
 ## Qué es
-Punto de venta para cafés y bares en Colombia (COP, impuesto al consumo, propina voluntaria, Bre-B, Nequi) con portada de venta en `/`. Textos en español de Colombia, tuteando, frases cortas. Se usa en tablets y celulares: botones grandes, nada que dependa del mouse.
+Punto de venta para cafés y bares en Colombia (COP, impuesto al consumo, propina voluntaria, Bre-B, Nequi) con portada de presentación en `/`. Textos en español de Colombia, tuteando, frases cortas. Se usa en tablets y celulares: botones grandes, nada que dependa del mouse.
 
 ## Comandos
 - `npm run dev` → http://localhost:3000 (demo en `/entrar`; PINs: Andrés 1234 dueño, Valentina 2222 caja, Juan Pablo 3333 y Camila 4444 meseros, Mateo 5555 barra)
