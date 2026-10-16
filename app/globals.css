@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+/*
+ * Ronda: paleta de las fachadas de bahareque del Eje Cafetero (cal, azul balcón, verde puerta,
+ * amarillo fachada) con tinto como color de texto. Archivo con eje de ancho para la tipografía;
+ * mono solo en tiquetes y recibos, como sale de la impresora térmica.
+ */
+@theme inline {
+  --color-cal: #f4f5f1;
+  --color-papel: #ffffff;
+  --color-tinto: #24150f;
+  --color-tinto-2: color-mix(in oklab, #24150f 78%, #f4f5f1);
+  --color-humo: #6b6660;
+  --color-linea: #dfded7;
+  --color-linea-2: #c9c7bf;
+  --color-balcon: #1e4fb8;
+  --color-balcon-2: #173f96;
+  --color-balcon-soft: #e3eaf8;
+  --color-puerta: #0b7a55;
+  --color-puerta-2: #086045;
+  --color-puerta-soft: #dff1e9;
+  --color-cereza: #d2232a;
+  --color-cereza-soft: #fbe3e3;
+  --color-fachada: #f4b400;
+  --color-fachada-soft: #fdf1cc;
+  --color-noche: #1a100c;
+  --color-noche-2: #2a1b15;
+  --color-noche-3: #3a2820;
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background: var(--color-cal);
+    color: var(--color-tinto);
+    font-family: var(--font-sans);
+    font-size: 16px;
+  }
+
+  ::selection {
+    background: var(--color-fachada-soft);
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--color-balcon);
+    outline-offset: 2px;
+  }
+
+  button {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Borde inferior dentado, como el corte del papel térmico */
+.ticket-edge {
+  --tooth: 8px;
+  mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / calc(var(--tooth) * 2) 100%;
+  padding-bottom: calc(var(--tooth) + 12px);
+}
+
+@keyframes print-in {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.print-in {
+  animation: print-in 420ms steps(12, end) both;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-puerta) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 14px transparent;
+  }
+}
+
+.ready-pulse {
+  animation: pulse-ring 1.6s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .print-in,
+  .ready-pulse {
+    animation: none;
+  }
+}
+
+/* Tirilla de impresora térmica de 80 mm (72 mm imprimibles); en carta u oficio sale igual de angosta */
+@page {
+  margin: 4mm;
+}
+
+@media print {
+  body {
+    background: #fff;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
