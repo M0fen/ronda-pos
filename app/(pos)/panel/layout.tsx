@@ -8,6 +8,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
   const manage = can.manage(staff);
   const links = [
     { href: "/panel", label: "Resumen" },
+    ...(manage ? [{ href: "/panel/rentabilidad", label: "Rentabilidad" }] : []),
     { href: "/panel/inventario", label: "Inventario" },
     { href: "/panel/clientes", label: "Clientes" },
     ...(manage

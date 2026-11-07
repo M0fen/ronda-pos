@@ -1,4 +1,5 @@
-import type { HappyHour } from "./core/time";
+import { sortTurnos, type Turno } from "./core/labor";
+import { toMinutes, type HappyHour } from "./core/time";
 
 /** Todo lo que cambia entre un local y otro vive aquí, como datos (no como código). */
 export interface Settings {
@@ -13,28 +14,23 @@ export interface Settings {
   receipt: { footer: string };
   alerts: { voidLimit: number; discountLimitPct: number; ownerWhatsapp: string };
   qr: { enabled: boolean; requireApproval: boolean; payAtTable: boolean };
+  /** Costo del equipo: carga sobre el salario, alerta de mano de obra y turnos del local */
+  labor: { exonerated: boolean; arlClass: number; alertPct: number; turnos: Turno[] };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  business: {
-    name: "Café Bar Villa Verde",
-    legalName: "Café Bar Villa Verde S.A.S.",
-    nit: "900.000.000-0",
-    address: "Villa Verde, Pereira",
-    city: "Pereira, Risaralda",
-    phone: "",
-    instagram: "",
-  },
+  business: { name: "Mi local", legalName: "", nit: "", address: "", city: "Pereira, Risaralda", phone: "", instagram: "" },
   theme: { primary: "#1E4FB8", accent: "#F4B400" },
   tax: { label: "Impuesto al consumo", rate: 8 },
   tips: { enabled: true, suggestedPct: 10 },
-  payments: { efectivo: true, nequi: true, breb: true, tarjeta: true, daviplata: false, nequiPhone: "300 000 0000", brebKey: "@cafevillaverde" },
-  happyHour: { enabled: true, days: [1, 2, 3, 4, 5], from: "17:00", to: "19:00", label: "Happy hour" },
+  payments: { efectivo: true, nequi: true, breb: true, tarjeta: true, daviplata: false, nequiPhone: "", brebKey: "" },
+  happyHour: { enabled: false, days: [1, 2, 3, 4, 5], from: "17:00", to: "19:00", label: "Happy hour" },
   loyalty: { enabled: true, minPurchase: 15000, goal: 8, reward: "Una bebida de la casa", rewardMax: 12000 },
-  invoice: { prefix: "FEVV", resolution: "Resolución DIAN de prueba (demo)", provider: "Factus", mode: "demo" },
+  invoice: { prefix: "FE", resolution: "", provider: "Factus", mode: "demo" },
   receipt: { footer: "La propina es voluntaria. ¡Gracias por venir!" },
   alerts: { voidLimit: 20000, discountLimitPct: 10, ownerWhatsapp: "" },
   qr: { enabled: true, requireApproval: true, payAtTable: true },
+  labor: { exonerated: true, arlClass: 1, alertPct: 35, turnos: [{ name: "Día", from: "06:00" }, { name: "Noche", from: "17:00" }] },
 };
 
 type Obj = Record<string, unknown>;
@@ -60,7 +56,24 @@ export function mergeSettings(saved: unknown): Settings {
   s.tips.suggestedPct = Math.min(10, Math.max(0, Math.round(s.tips.suggestedPct)));
   s.tax.rate = Math.min(19, Math.max(0, s.tax.rate));
   s.happyHour.days = s.happyHour.days.filter((d) => Number.isInteger(d) && d >= 1 && d <= 7);
+  s.labor.arlClass = Math.min(5, Math.max(1, Math.round(s.labor.arlClass) || 1));
+  s.labor.alertPct = Math.min(60, Math.max(10, Math.round(s.labor.alertPct) || 35));
+  s.labor.turnos = cleanTurnos(s.labor.turnos);
   return s;
+}
+
+/** Turnos del local: nombre corto y hora de inicio válida, sin repetir hora, de 1 a 4, en el orden de la jornada. */
+function cleanTurnos(list: unknown): Turno[] {
+  const seen = new Set<number>();
+  const out: Turno[] = [];
+  for (const t of Array.isArray(list) ? list : []) {
+    if (!isObj(t) || typeof t.name !== "string" || typeof t.from !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(t.from)) continue;
+    const name = t.name.trim().slice(0, 20);
+    if (!name || seen.has(toMinutes(t.from))) continue;
+    seen.add(toMinutes(t.from));
+    out.push({ name, from: t.from });
+  }
+  return out.length ? sortTurnos(out).slice(0, 4) : structuredClone(DEFAULT_SETTINGS.labor.turnos);
 }
 
 export const ROLE_LABEL: Record<string, string> = {
@@ -68,7 +81,7 @@ export const ROLE_LABEL: Record<string, string> = {
   admin: "Administrador",
   cashier: "Caja",
   waiter: "Mesero",
-  bar: "Barra",
+  bar: "Barra y cocina",
 };
 
 export const METHOD_LABEL: Record<string, string> = {

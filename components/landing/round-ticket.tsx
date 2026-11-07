@@ -7,15 +7,15 @@ import { cop } from "@/lib/money";
 import { cn } from "@/lib/utils";
 
 const ITEMS = [
-  { id: "capuchino", name: "Capuchino", price: 8500, color: "#7A4A2A" },
-  { id: "poker", name: "Poker", price: 6000, color: "#B07800" },
-  { id: "mojito", name: "Mojito", price: 26000, color: "#D2232A" },
-  { id: "empanadas", name: "Empanadas x3", price: 10500, color: "#C2541B" },
+  { id: "smash", name: "Burger smash doble", price: 38000, color: "#7A4A2A" },
+  { id: "antojo", name: "Antojo de patatas", price: 17000, color: "#E0A100" },
+  { id: "club", name: "Club Colombia", price: 7500, color: "#B07800" },
+  { id: "coca", name: "Coca-Cola lata", price: 5000, color: "#0B7A55" },
 ];
 
 /** La ronda que se arma en la portada: tocar productos imprime la comanda y se cobra con Bre-B. */
 export function RoundTicket() {
-  const [lines, setLines] = useState<Record<string, number>>({ capuchino: 2 });
+  const [lines, setLines] = useState<Record<string, number>>({ smash: 2 });
   const [paid, setPaid] = useState(false);
   const [sent, setSent] = useState(false);
   const list = ITEMS.filter((i) => lines[i.id]);
@@ -43,7 +43,7 @@ export function RoundTicket() {
 
       <div className="relative mt-4 rotate-[-1.2deg]">
         <article key={list.map((i) => `${i.id}${lines[i.id]}`).join()} className="ticket-edge print-in relative mx-auto w-full max-w-[360px] bg-white px-6 pt-6 font-mono text-[13px] text-black shadow-[0_18px_40px_-12px_rgba(36,21,15,0.35)]">
-          <p className="text-center font-sans text-lg font-extrabold [font-stretch:110%]">Café Bar Villa Verde</p>
+          <p className="text-center font-sans text-lg font-extrabold [font-stretch:110%]">Sr. Patata</p>
           <p className="text-center">Mesa 7 · Ronda 1</p>
           <div className="my-3 border-t border-dashed border-black/40" />
           {list.length ? (

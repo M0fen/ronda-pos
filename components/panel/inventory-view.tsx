@@ -33,7 +33,7 @@ export function InventoryView({ ingredients, costs, moves }: { ingredients: Ing[
         <div>
           <h1 className="text-2xl font-bold">Inventario</h1>
           <p className="text-humo">
-            Se descuenta solo con cada pedido, según la receta: un trago son 30 ml, un espresso 18 g. {low ? `${low} insumos bajo el mínimo.` : ""} Valor en bodega: {cop(value)}.
+            Se descuenta solo con cada pedido, según la receta de cada producto. {low ? `${low} insumos bajo el mínimo.` : ""} Valor en bodega: {cop(value)}.
           </p>
         </div>
         <div className="flex rounded-2xl bg-tinto/6 p-1">

@@ -135,6 +135,49 @@ export function SettingsForm({ initial, demo, ephemeral }: { initial: Settings; 
           {text("invoice", "resolution", "Resolución DIAN")}
           {text("receipt", "footer", "Mensaje al final del recibo")}
         </Card>
+        <Card title="Costo del equipo">
+          {toggle("labor", "exonerated", "Exonerado de salud, SENA e ICBF", "Artículo 114-1 del Estatuto Tributario. Aplica a la mayoría de las S.A.S.; confírmalo con tu contador.")}
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-sm font-semibold text-humo">Riesgo de la ARL</span>
+              <select className="mt-1 h-12 w-full rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto" value={s.labor.arlClass} onChange={(e) => up("labor", "arlClass", Number(e.target.value))}>
+                {["I", "II", "III", "IV", "V"].map((c, i) => (
+                  <option key={c} value={i + 1}>
+                    Clase {c}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {text("labor", "alertPct", "Alerta de mano de obra (%)", { type: "number", hint: "Cuando el equipo pasa de este % de lo vendido" })}
+          </div>
+          <p className="text-sm font-semibold text-humo">Turnos del local</p>
+          {s.labor.turnos.map((tu, i) => (
+            <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2">
+              <input
+                aria-label="Nombre del turno"
+                className="h-12 min-w-0 rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto"
+                value={tu.name}
+                onChange={(e) => up("labor", "turnos", s.labor.turnos.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+              />
+              <input
+                type="time"
+                aria-label={`Hora en que empieza ${tu.name}`}
+                className="h-12 rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto"
+                value={tu.from}
+                onChange={(e) => up("labor", "turnos", s.labor.turnos.map((x, j) => (j === i ? { ...x, from: e.target.value } : x)))}
+              />
+              <button className={btn("ghost", "md")} disabled={s.labor.turnos.length <= 1} onClick={() => up("labor", "turnos", s.labor.turnos.filter((_, j) => j !== i))}>
+                Quitar
+              </button>
+            </div>
+          ))}
+          {s.labor.turnos.length < 4 ? (
+            <button className={btn("soft", "sm")} onClick={() => up("labor", "turnos", [...s.labor.turnos, { name: "Nuevo turno", from: "20:00" }])}>
+              Agregar turno
+            </button>
+          ) : null}
+          <p className="text-[13px] text-humo">Cada turno va desde su hora hasta que empieza el siguiente, y el último hasta el cierre. Rentabilidad compara lo que vende cada turno con lo que cuesta el equipo en esas horas.</p>
+        </Card>
       </div>
       {demo ? (
         <div className="mt-4 rounded-3xl bg-papel p-5 ring-1 ring-linea">
