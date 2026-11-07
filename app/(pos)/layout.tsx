@@ -17,6 +17,7 @@ export default async function PosLayout({ children }: { children: React.ReactNod
     <div className="flex min-h-dvh flex-col">
       <PosNav
         business={biz.name}
+        whiteLabel={biz.settings.theme.whiteLabel}
         links={links}
         staff={{ name: staff.name, color: staff.color, role: ROLE_LABEL[staff.role] ?? staff.role }}
         happy={isHappyHour(biz.settings.happyHour) ? biz.settings.happyHour.label : null}

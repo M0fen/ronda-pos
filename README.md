@@ -36,6 +36,7 @@ En **Panel → Ajustes** está el botón para reiniciar la demo.
 - **Impresión:** usa la impresión del navegador (precuenta y factura en formato de tirilla de 80 mm).
 - **WhatsApp:** el resumen del día y los mensajes a clientes abren WhatsApp con el texto listo; no hay envío automático.
 - **Sin conexión:** la demo necesita internet. La app de caja para Android sin conexión hace parte de la versión 1.
+- **Marca:** la demo lleva la marca de Sr. Patata en todo el sistema (nombre, colores, ícono y portada). Se apaga en Panel → Ajustes → Marca y vuelve a ser Ronda.
 - **Equipo y carta:** salarios, horarios y clientes son de ejemplo. La carta sale del menú público de Sr. Patata con precios redondeados; bebidas, cervezas, adiciones y recetas son de ejemplo y se editan en Panel → Carta.
 - **Costo del equipo:** es una estimación para decidir turnos (recargos, festivos, seguridad social y prestaciones de la ley vigente). La nómina la liquida el contador.
 

@@ -23,7 +23,7 @@ export default async function EnterPage() {
     <main className="mx-auto flex min-h-dvh max-w-5xl flex-col px-4 py-6 sm:px-8 sm:py-10">
       <div className="flex items-center justify-between">
         <Link href="/" className="text-2xl font-extrabold tracking-tight [font-stretch:118%]">
-          ronda
+          {biz.settings.theme.whiteLabel ? biz.name : "ronda"}
         </Link>
         {demo ? <span className="rounded-full bg-fachada-soft px-3 py-1 text-sm font-semibold text-[#7a5600]">Demo con datos de ejemplo</span> : null}
       </div>

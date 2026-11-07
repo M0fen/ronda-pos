@@ -56,8 +56,8 @@ export const DEMO_BUSINESS_ID = stableId("biz:villa-verde");
 export const DEMO_SETTINGS: Settings = {
   ...DEFAULT_SETTINGS,
   business: { name: "Sr. Patata", legalName: "Sr. Patata (demo)", nit: "000.000.000-0", address: "Cra. 13 #8-25, Circunvalar", city: "Pereira, Risaralda", phone: "", instagram: "@senorpatata_" },
-  theme: { primary: "#171310", accent: "#FFC20E" },
-  payments: { ...DEFAULT_SETTINGS.payments, nequiPhone: "300 000 0000", brebKey: "@srpatata" },
+  theme: { primary: "#171310", accent: "#FFC20E", whiteLabel: true },
+  payments: { ...DEFAULT_SETTINGS.payments, nequiPhone: "300 000 0000", brebKey: "@demo-srpatata" },
   loyalty: { enabled: true, minPurchase: 30000, goal: 8, reward: "Una bebida de la casa", rewardMax: 7000 },
   invoice: { prefix: "FESP", resolution: "Resolución DIAN de prueba (demo)", provider: "Factus", mode: "demo" },
   receipt: { footer: "Maestría patatera. La propina es voluntaria. ¡Gracias por venir!" },

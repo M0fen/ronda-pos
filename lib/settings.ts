@@ -4,7 +4,8 @@ import { toMinutes, type HappyHour } from "./core/time";
 /** Todo lo que cambia entre un local y otro vive aquí, como datos (no como código). */
 export interface Settings {
   business: { name: string; legalName: string; nit: string; address: string; city: string; phone: string; instagram: string };
-  theme: { primary: string; accent: string };
+  /** Colores del local. Con whiteLabel, el sistema entero lleva el nombre y los colores del local en lugar de Ronda. */
+  theme: { primary: string; accent: string; whiteLabel: boolean };
   tax: { label: string; rate: number };
   tips: { enabled: boolean; suggestedPct: number };
   payments: { efectivo: boolean; nequi: boolean; breb: boolean; tarjeta: boolean; daviplata: boolean; nequiPhone: string; brebKey: string };
@@ -20,7 +21,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   business: { name: "Mi local", legalName: "", nit: "", address: "", city: "Pereira, Risaralda", phone: "", instagram: "" },
-  theme: { primary: "#1E4FB8", accent: "#F4B400" },
+  theme: { primary: "#1E4FB8", accent: "#F4B400", whiteLabel: false },
   tax: { label: "Impuesto al consumo", rate: 8 },
   tips: { enabled: true, suggestedPct: 10 },
   payments: { efectivo: true, nequi: true, breb: true, tarjeta: true, daviplata: false, nequiPhone: "", brebKey: "" },
