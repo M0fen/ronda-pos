@@ -136,6 +136,13 @@ export function SettingsForm({ initial, demo, ephemeral }: { initial: Settings; 
           {text("invoice", "resolution", "Resolución DIAN")}
           {text("receipt", "footer", "Mensaje al final del recibo")}
         </Card>
+        <Card title="Domicilios">
+          {toggle("channels", "rappi", "Rappi")}
+          {text("channels", "rappiPct", "Comisión de Rappi (%)", { type: "number", hint: "La que tengas pactada: así la rentabilidad muestra lo que de verdad te queda por canal" })}
+          {toggle("channels", "didi", "DiDi Food")}
+          {text("channels", "didiPct", "Comisión de DiDi Food (%)", { type: "number" })}
+          {toggle("channels", "propio", "Domicilio propio", "Pedidos por WhatsApp o teléfono con tus domiciliarios")}
+        </Card>
         <Card title="Costo del equipo">
           {toggle("labor", "exonerated", "Exonerado de salud, SENA e ICBF", "Artículo 114-1 del Estatuto Tributario. Aplica a la mayoría de las S.A.S.; confírmalo con tu contador.")}
           <div className="grid grid-cols-2 gap-3">

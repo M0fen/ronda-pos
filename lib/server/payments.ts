@@ -4,7 +4,7 @@ import { fakeCufe, token } from "../seed";
 import { METHOD_LABEL } from "../settings";
 import { normalizePhone } from "../utils";
 import { can, type Staff } from "./auth";
-import { audit, bump, getBusiness } from "./business";
+import { audit, bump, getBusiness, nextNumber } from "./business";
 import { loadCheck } from "./checks";
 import { getDb, type Tx } from "./db";
 import { UserError } from "./errors";
@@ -145,8 +145,8 @@ export async function closeCheck(staff: Staff, checkId: string, input: CloseInpu
 
     const now = new Date();
     const inv = await tx.one<{ id: string; number: number }>(
-      `insert into invoices (business_id, check_id, prefix, cufe, public_token, kind, customer_doc, customer_name, customer_email, subtotal, tax, tip, total)
-       values ($1, $2, $3, 'pendiente', $4, $5, $6, $7, $8, $9, $10, $11, $12) returning id, number`,
+      `insert into invoices (business_id, check_id, prefix, cufe, public_token, kind, customer_doc, customer_name, customer_email, subtotal, tax, tip, total, number)
+       values ($1, $2, $3, 'pendiente', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) returning id, number`,
       [
         staff.business_id,
         checkId,
@@ -160,6 +160,7 @@ export async function closeCheck(staff: Staff, checkId: string, input: CloseInpu
         check.totals.tax,
         check.tips,
         check.totals.total + check.tips,
+        await nextNumber(tx, staff.business_id, "invoice"),
       ],
     );
     // CUFE simulado con la misma receta de la DIAN (SHA-384 de número, fecha, valores y NIT)
@@ -170,7 +171,11 @@ export async function closeCheck(staff: Staff, checkId: string, input: CloseInpu
       "update checks set status = 'paid', closed_at = now(), closed_by = $2, tip_answer = $3, customer_id = $4, updated_at = now() where id = $1",
       [checkId, staff.id, input.tipAnswer, customerId],
     );
-    await tx.query("update check_items set status = 'delivered', delivered_at = coalesce(delivered_at, now()), ready_at = coalesce(ready_at, now()) where check_id = $1 and status in ('sent','ready')", [checkId]);
+    // Al cerrar, lo servido queda entregado. En el mostrador se cobra antes de preparar: lo que sigue en cocina se queda allí
+    await tx.query(
+      "update check_items set status = 'delivered', delivered_at = coalesce(delivered_at, now()), ready_at = coalesce(ready_at, now()) where check_id = $1 and status = any($2::text[])",
+      [checkId, check.kind === "llevar" ? ["ready"] : ["sent", "ready"]],
+    );
     await tx.query("update requests set status = 'done', handled_by = $2, handled_at = now() where check_id = $1 and status = 'pending'", [checkId, staff.id]);
 
     let stamps = 0;

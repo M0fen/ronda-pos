@@ -17,9 +17,14 @@ const FEATURES = [
   },
   {
     title: "Barra y cocina sin papel",
-    text: "Los pedidos llegan con su tiempo corriendo y un sonido. Un toque y el mesero ve que está listo. Sirve en una tablet o en un televisor con navegador.",
+    text: "Los pedidos llegan con su tiempo corriendo, un sonido y la ficha de cada plato con los gramos de la receta, para que salga igual en todas las sedes. En el mostrador, una pantalla de turnos llama a cada cliente por su número.",
     shot: "/shots/barra.webp",
     dark: true,
+  },
+  {
+    title: "Rappi y domicilios, sin errores en la bolsa",
+    text: "Rappi y el domicilio propio en un solo tablero, de que entran a que salen. La cocina ve en cuánto llega el domiciliario y ninguna bolsa se cierra sin revisar la lista: cada producto con sus salsas, los cubiertos y la factura.",
+    shot: "/shots/domicilios.webp",
   },
   {
     title: "Cobrar toma segundos",
@@ -43,6 +48,11 @@ const FEATURES = [
     shot: "/shots/rentabilidad.webp",
   },
   {
+    title: "Todas las sedes en una pantalla",
+    text: "Ventas, insumos, equipo y comisiones de Rappi de cada sede, lado a lado: cuál deja más, cuál hay que revisar y qué hay que comprar en cada una. Cada sede tiene su equipo, su caja y su propia numeración de facturas.",
+    shot: "/shots/cadena.webp",
+  },
+  {
     title: "El dueño duerme tranquilo",
     text: "Anular lo enviado pide el PIN del encargado. La caja se cierra con arqueo ciego y el resumen del día te llega por WhatsApp.",
     shot: "/shots/panel.webp",
@@ -54,6 +64,8 @@ const FAQ = [
   ["¿Qué pasa si se cae el internet?", "El sistema trabaja en línea. Si se cae el internet del local, la tablet puede seguir con los datos de un celular."],
   ["¿Emite factura electrónica?", "Sí, a través de un proveedor tecnológico autorizado por la DIAN, que se conecta cuando el sistema se instala en el local. Si el cliente pide la factura a su nombre, se pone su NIT o cédula en el cobro. En la demo la factura es de prueba: se numera y lleva su código QR, pero no se envía a la DIAN."],
   ["¿Cómo sabe lo que cuesta cada turno?", "Con el salario o el valor de la hora de cada persona y las horas que marca con su PIN. Suma los recargos nocturnos, dominicales y festivos de la ley vigente, la seguridad social y las prestaciones. Es una estimación para decidir turnos: la nómina la liquida tu contador."],
+  ["¿Sirve para varias sedes?", "Sí. Cada sede trabaja con su equipo, su caja, su inventario y su numeración de facturas, y el dueño las ve todas juntas en la pantalla de la cadena. La tablet de cada sede muestra solo a su equipo al entrar."],
+  ["¿Se conecta con Rappi?", "Hoy el pedido de Rappi se pasa al tablero de domicilios en segundos, con su código y los minutos del domiciliario, y de ahí sigue como cualquier pedido: cocina, lista de empaque y factura. La conexión directa, para que los pedidos entren solos, se hace con la API de aliados de Rappi o con un integrador, y Rappi tiene que aprobarla."],
   ["¿Cómo funciona el pago con Bre-B?", "El cliente paga a la llave de tu negocio desde cualquier banco y la plata llega al instante. En la caja se registra con la referencia del pago."],
   ["¿De quién son los datos?", "Tuyos. Los datos de tus clientes se guardan solo con su autorización, como pide la Ley 1581."],
 ];
@@ -94,7 +106,7 @@ export default async function Landing() {
               )}
             </h1>
             <p className={cn("mt-6 max-w-[34ch] text-xl leading-relaxed", wl ? "text-white/80" : "text-tinto-2")}>
-              Mesas, barra y cocina sin papel, factura electrónica, Bre-B, sellos para tus clientes y lo que cuesta cada turno, en la tablet o el celular que ya tienes.
+              Mesas, barra y cocina sin papel, domicilios de Rappi, factura electrónica, Bre-B, lo que cuesta cada turno y todas las sedes en una pantalla, en la tablet o el celular que ya tienes.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link href="/entrar" className={btn(wl ? "warn" : "primary", "xl")}>

@@ -17,6 +17,7 @@ import {
   type Turno,
 } from "../core/labor";
 import { addDays, bogotaParts, jornadaKey, weekdayOf } from "../core/time";
+import { CHANNEL_LABEL, channelPct } from "../settings";
 import { can, checkPin, type Staff } from "./auth";
 import { audit, bump, getBusiness } from "./business";
 import { getDb } from "./db";
@@ -92,6 +93,8 @@ export interface ProfitRow {
   cogs: number;
   /** Costo del equipo */
   labor: number;
+  /** Comisión de las plataformas de domicilios */
+  commission: number;
   /** Minutos trabajados */
   minutes: number;
   checks: number;
@@ -130,13 +133,16 @@ export interface ProfitReport {
   load: number;
   alertPct: number;
   missingPay: string[];
+  /** Ventas por canal: en el local, Rappi, DiDi y domicilio propio, con la comisión de cada plataforma */
+  channels: { key: string; label: string; pct: number; net: number; total: number; checks: number; commission: number }[];
 }
 
-const emptyRow = (): ProfitRow => ({ net: 0, cogs: 0, labor: 0, minutes: 0, checks: 0 });
+const emptyRow = (): ProfitRow => ({ net: 0, cogs: 0, labor: 0, commission: 0, minutes: 0, checks: 0 });
 const addRow = (a: ProfitRow, b: ProfitRow) => {
   a.net += b.net;
   a.cogs += b.cogs;
   a.labor += b.labor;
+  a.commission += b.commission;
   a.minutes += b.minutes;
   a.checks += b.checks;
 };
@@ -165,13 +171,13 @@ export async function profitReport(bizId: string, range: { from: string; to: str
       "select id, staff_id, clock_in, clock_out, pay_kind, pay_amount from shifts where business_id = $1 and clock_in >= $2 and clock_in < $3 order by clock_in",
       [bizId, `${weekOf(from)}T05:00:00-05:00`, `${addDays(until, 1)}T05:00:00-05:00`],
     ),
-    db.query<{ id: string; opened_by: string | null; closed_at: string; total: number; tip: number; base: number | null; cogs: number }>(
+    db.query<{ id: string; opened_by: string | null; closed_at: string; channel: string; total: number; tip: number; base: number | null; cogs: number }>(
       `with rc as (
          select r.product_id, sum(r.qty * g.cost)::float as unit_cost
            from recipe_items r join ingredients g on g.id = r.ingredient_id
           where r.business_id = $1 group by r.product_id
        )
-       select c.id, c.opened_by, c.closed_at, coalesce(pay.total, 0)::int as total, coalesce(pay.tip, 0)::int as tip, inv.base::int as base, coalesce(cg.cogs, 0)::float as cogs
+       select c.id, c.opened_by, c.closed_at, c.channel, coalesce(pay.total, 0)::int as total, coalesce(pay.tip, 0)::int as tip, inv.base::int as base, coalesce(cg.cogs, 0)::float as cogs
          from checks c
          left join lateral (select sum(p.amount) as total, sum(p.tip) as tip from payments p where p.check_id = c.id and p.status = 'ok') pay on true
          left join lateral (select sum(v.subtotal) as base from invoices v where v.check_id = c.id) inv on true
@@ -189,17 +195,26 @@ export async function profitReport(bizId: string, range: { from: string; to: str
   // Ventas e insumos por jornada y turno del local (por la hora en que se cerró la cuenta)
   const sales = new Map<string, ProfitRow>();
   const byOpener = new Map<string, { net: number; checks: number; tips: number }>();
+  const byChannel = new Map<string, { net: number; total: number; checks: number; commission: number }>();
   let tips = 0;
   for (const c of checks) {
     const net = c.base ?? Math.round(c.total / 1.08);
+    const commission = (c.total * channelPct(biz.settings, c.channel)) / 100;
     const jornada = jornadaOf(c.closed_at);
     const key = `${jornada}|${turnoAt(c.closed_at, turnos)}`;
     const row = sales.get(key) ?? emptyRow();
     row.net += net;
     row.cogs += c.cogs;
+    row.commission += commission;
     row.checks += 1;
     sales.set(key, row);
     if (jornada > to) continue;
+    const ch = byChannel.get(c.channel) ?? { net: 0, total: 0, checks: 0, commission: 0 };
+    ch.net += net;
+    ch.total += c.total;
+    ch.checks += 1;
+    ch.commission += commission;
+    byChannel.set(c.channel, ch);
     tips += c.tip;
     if (c.opened_by) {
       const o = byOpener.get(c.opened_by) ?? { net: 0, checks: 0, tips: 0 };
@@ -313,6 +328,9 @@ export async function profitReport(bizId: string, range: { from: string; to: str
     load: loadRate(labor),
     alertPct: labor.alertPct,
     missingPay: people.filter((p) => p.minutes > 0 && p.payAmount <= 0).map((p) => p.name),
+    channels: ["local", "rappi", "didi", "propio"]
+      .filter((k) => byChannel.has(k))
+      .map((k) => ({ key: k, label: CHANNEL_LABEL[k] ?? k, pct: channelPct(biz.settings, k), ...byChannel.get(k)! })),
   };
 }
 

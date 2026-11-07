@@ -1,4 +1,5 @@
 import "server-only";
+import { cookies } from "next/headers";
 import { cache } from "react";
 import { DEFAULT_SETTINGS, mergeSettings, type Settings } from "../settings";
 import { getDb, type Tx } from "./db";
@@ -8,23 +9,55 @@ export interface Business {
   name: string;
   slug: string;
   settings: Settings;
+  /** Nombre de la sede dentro de la cadena ("" si el local es único) */
+  sede: string;
+  chainId: string | null;
 }
 
 export const getBusiness = cache(async (bizId: string): Promise<Business> => {
   const db = await getDb();
-  const row = await db.one<{ id: string; name: string; slug: string; settings: unknown }>("select id, name, slug, settings from businesses where id = $1", [bizId]);
+  const row = await db.one<{ id: string; name: string; slug: string; settings: unknown; sede: string; chain_id: string | null }>(
+    "select id, name, slug, settings, sede, chain_id from businesses where id = $1",
+    [bizId],
+  );
   if (!row) throw new Error("Negocio no encontrado");
   const settings = mergeSettings(row.settings);
-  return { id: row.id, name: settings.business.name, slug: row.slug, settings };
+  return { id: row.id, name: settings.business.name, slug: row.slug, settings, sede: row.sede, chainId: row.chain_id };
 });
 
-/** El negocio de la demo (o el único) para las páginas públicas sin sesión. */
+/** Cookie con la sede de este dispositivo: la tablet de cada sede muestra a su equipo al entrar. */
+export const SEDE_COOKIE = "ronda_sede";
+
+/** El local de este dispositivo (la sede elegida en la pantalla de entrada) o el primero. */
 export const getDefaultBusiness = cache(async (): Promise<Business> => {
   const db = await getDb();
-  const row = await db.one<{ id: string }>("select id from businesses order by created_at limit 1");
+  const wanted = (await cookies()).get(SEDE_COOKIE)?.value;
+  const chosen = wanted && /^[0-9a-f-]{36}$/i.test(wanted) ? await db.one<{ id: string }>("select id from businesses where id = $1", [wanted]) : null;
+  const row = chosen ?? (await db.one<{ id: string }>("select id from businesses order by created_at limit 1"));
   if (!row) throw new Error("No hay negocios");
   return getBusiness(row.id);
 });
+
+/** Sedes de la cadena del local (el mismo local si no tiene cadena), en el orden en que se crearon. */
+export async function getSedes(bizId: string) {
+  const db = await getDb();
+  return db.query<{ id: string; sede: string; name: string }>(
+    `select b.id, b.sede, b.name from businesses b
+      where b.id = $1 or (b.chain_id is not null and b.chain_id = (select chain_id from businesses where id = $1))
+      order by b.created_at, b.sede`,
+    [bizId],
+  );
+}
+
+/** Consecutivo propio de cada sede para cuentas y facturas: cada una con su numeración y su resolución. */
+export async function nextNumber(tx: Pick<Tx, "one">, bizId: string, kind: "check" | "invoice") {
+  const row = await tx.one<{ last: number }>(
+    `insert into counters (business_id, kind, last) values ($1, $2, $3)
+     on conflict (business_id, kind) do update set last = counters.last + 1 returning last`,
+    [bizId, kind, kind === "check" ? 101 : 1001],
+  );
+  return Number(row!.last);
+}
 
 export interface Brand {
   name: string;

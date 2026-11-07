@@ -1,20 +1,24 @@
 # Ronda
 
-Sistema de punto de venta para cafés, bares y restaurantes en Colombia: mesas, comandas a barra y cocina, cobro con propina voluntaria y cuentas divididas, Nequi y Bre-B, factura electrónica, carta QR, inventario por receta, sellos para clientes, caja con arqueo ciego, turnos marcados con PIN, el costo de cada turno y de cada persona frente a lo que vende, y el resumen del día por WhatsApp. Funciona en el navegador de la tablet o el celular que ya tiene el local.
+Sistema de punto de venta para cafés, bares y restaurantes en Colombia: mesas, comandas a barra y cocina con la ficha de cada plato, domicilios de Rappi y propios con lista de empaque, mostrador con pantalla de turnos, cobro con propina voluntaria y cuentas divididas, Nequi y Bre-B, factura electrónica, carta QR, inventario por receta, sellos para clientes, caja con arqueo ciego, turnos marcados con PIN, el costo de cada turno y de cada persona frente a lo que vende, varias sedes con un panel de la cadena y el resumen del día por WhatsApp. Funciona en el navegador de la tablet o el celular que ya tiene el local.
 
-La portada (`/`) presenta el sistema. La demo abre en `/entrar` con Sr. Patata (Pereira): su carta pública con precios redondeados, el equipo con sus turnos de las últimas dos semanas y el servicio en marcha.
+La portada (`/`) presenta el sistema. La demo abre en `/entrar` con Sr. Patata, cadena de Pereira y Dosquebradas con cuatro sedes (Circunvalar, Belmonte, Dosquebradas y el mostrador de Galicia Mall Plaza): su carta pública con precios redondeados y, en cada sede, su equipo con los turnos de las últimas dos semanas, ventas en mesa, para llevar y por Rappi, y el servicio en marcha.
 
 ## Demo
 
+Sede Circunvalar (la tablet abre aquí; la sede se cambia abajo en `/entrar`):
+
 | Persona | Rol | PIN |
 | --- | --- | --- |
-| Andrés | Dueño: todo, incluidos panel y ajustes | 1234 |
-| Valentina | Caja: cobra, abre y cierra caja, autoriza anulaciones | 2222 |
+| Andrés | Dueño: todo, incluidos panel, ajustes y la cadena. Entra en las cuatro sedes | 1234 |
+| Valentina | Caja: cobra, abre y cierra caja, autoriza anulaciones, despacha domicilios | 2222 |
 | Juan Pablo | Mesero | 3333 |
 | Camila | Mesero | 4444 |
 | Mateo | Barra y cocina (salario) | 5555 |
 | Luisa | Barra y cocina, turno de noche | 6666 |
 | Sofía | Barra y cocina, por horas | 7777 |
+
+En las otras sedes la pantalla de entrada muestra el PIN de cada persona: Belmonte (Daniela, administradora, 2121), Dosquebradas (Paola, administradora, 3131) y Galicia, un mostrador de centro comercial (Tatiana, caja, 4141).
 
 Un recorrido de cinco minutos:
 
@@ -26,6 +30,8 @@ Un recorrido de cinco minutos:
 6. Entra como **Andrés** y mira el panel (Hoy y Ayer), el inventario, la carta, los clientes y los QR de las mesas. Abre un QR en el celular para ver la carta del cliente.
 7. En **Panel → Rentabilidad** mira qué turnos se pagan solos, cuánto costó cada persona con recargos y carga, y las alertas de jornada (42 horas, extras, domingos y festivos).
 8. En `/entrar`, toca **Marcar turno**, elige a Luisa y escribe 6666: queda en turno y suma a la mano de obra de hoy.
+9. Como **Andrés**, abre **Domicilios**: un pedido de Rappi en cada etapa. Acepta el nuevo, revisa la lista del que está para empacar (la bolsa no se cierra si falta algo) y entrega el que espera el domiciliario: queda pagado en la plataforma y con su factura. En **Barra y cocina** los tiquetes de domicilio dicen en cuánto llega el domiciliario.
+10. En **Panel → Cadena** compara las cuatro sedes: ventas, insumos, equipo, comisiones de Rappi, alertas y lo que hay que comprar en cada una. **Ir a Galicia** pasa la tablet a esa sede: abre **Pantalla de turnos** desde Barra y cocina para ver el televisor del mostrador.
 
 En **Panel → Ajustes** está el botón para reiniciar la demo.
 
@@ -33,11 +39,12 @@ En **Panel → Ajustes** está el botón para reiniciar la demo.
 
 - **Factura electrónica:** se numera y se calcula un CUFE de prueba; no se envía a la DIAN. En producción se conecta un proveedor tecnológico autorizado.
 - **Bre-B, Nequi y tarjeta:** se registran con la referencia del pago. No hay conexión con bancos ni datáfonos.
+- **Rappi:** el pedido se pasa al tablero con su código y los minutos del domiciliario; no hay conexión directa con Rappi (se hace con su API de aliados o con un integrador, con aprobación de Rappi). La comisión de cada canal se pone en Panel → Ajustes.
 - **Impresión:** usa la impresión del navegador (precuenta y factura en formato de tirilla de 80 mm).
 - **WhatsApp:** el resumen del día y los mensajes a clientes abren WhatsApp con el texto listo; no hay envío automático.
 - **Sin conexión:** la demo necesita internet. La app de caja para Android sin conexión hace parte de la versión 1.
 - **Marca:** la demo lleva la marca de Sr. Patata en todo el sistema (nombre, colores, ícono y portada). Se apaga en Panel → Ajustes → Marca y vuelve a ser Ronda.
-- **Equipo y carta:** salarios, horarios y clientes son de ejemplo. La carta sale del menú público de Sr. Patata con precios redondeados; bebidas, cervezas, adiciones y recetas son de ejemplo y se editan en Panel → Carta.
+- **Equipo, carta y cifras:** salarios, horarios, clientes, ventas y comisiones son de ejemplo. Las sedes y sus direcciones salen del perfil público de Sr. Patata; la carta, de su menú público con precios redondeados; bebidas, cervezas, adiciones y recetas son de ejemplo y se editan en Panel → Carta.
 - **Costo del equipo:** es una estimación para decidir turnos (recargos, festivos, seguridad social y prestaciones de la ley vigente). La nómina la liquida el contador.
 
 ## Correr en local
@@ -64,11 +71,11 @@ Variables en `.env.example`.
 ## Cómo está hecho
 
 - Next.js 16 (App Router), React 19 y Tailwind 4. Todo se lee en Server Components y todo lo que escribe va por Server Actions (no hay rutas `/api`).
-- `lib/core/`: reglas puras con pruebas (impuesto incluido, propina, división de cuentas, vueltas, sellos, happy hour, jornada, y en `labor.ts` el costo de cada turno: recargos, festivos, carga prestacional y alertas de jornada).
-- `lib/server/`: pedidos y rondas, pagos y caja, carta QR, inventario, reportes, recibos, equipo y permisos.
-- `lib/schema.ts`: migraciones SQL; `lib/seed.ts`: el local de la demo con dos semanas de ventas y de turnos.
+- `lib/core/`: reglas puras con pruebas (impuesto incluido, propina, división de cuentas, vueltas, sellos, happy hour, jornada; en `labor.ts` el costo de cada turno: recargos, festivos, carga prestacional y alertas de jornada; en `delivery.ts` las etapas de un domicilio y su lista de empaque).
+- `lib/server/`: pedidos y rondas, pagos y caja, domicilios, cadena, carta QR, inventario, reportes, recibos, equipo y permisos.
+- `lib/schema.ts`: migraciones SQL; `lib/seed.ts`: la cadena de la demo, cuatro sedes con dos semanas de ventas y de turnos.
 - Tiempo real por sondeo liviano: cada cambio sube un contador y las pantallas abiertas se refrescan.
 
 ## Lo que sigue para la versión 1
 
-Facturación electrónica real con un proveedor autorizado (con numeración propia de cada local y su resolución), confirmación automática de Bre-B y Nequi, impresión directa en térmicas de red, app de caja para Android sin conexión, envío automático por WhatsApp Business y varias sedes.
+Facturación electrónica real con un proveedor autorizado (cada sede ya lleva su prefijo y su numeración), confirmación automática de Bre-B y Nequi, impresión directa en térmicas de red, app de caja para Android sin conexión, conexión directa con Rappi, sellos compartidos entre sedes y envío automático por WhatsApp Business.

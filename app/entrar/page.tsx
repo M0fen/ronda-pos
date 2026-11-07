@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PinLogin } from "@/components/pin-login";
-import { getDefaultBusiness } from "@/lib/server/business";
+import { SedePicker } from "@/components/sede-picker";
+import { getDefaultBusiness, getSedes } from "@/lib/server/business";
 import { getDb, isDemoMode } from "@/lib/server/db";
 import { openShifts } from "@/lib/server/labor";
 import { DEMO_STAFF } from "@/lib/seed";
@@ -16,7 +17,8 @@ export default async function EnterPage() {
     "select id, name, role, color from staff where business_id = $1 and active order by case role when 'owner' then 0 when 'admin' then 1 when 'cashier' then 2 when 'waiter' then 3 else 4 end, name",
     [biz.id],
   );
-  const onShift = new Map((await openShifts(biz.id)).map((s) => [s.staff_id, new Date(s.clock_in).toISOString()]));
+  const [shifts, sedes] = await Promise.all([openShifts(biz.id), getSedes(biz.id)]);
+  const onShift = new Map(shifts.map((s) => [s.staff_id, new Date(s.clock_in).toISOString()]));
   const demo = isDemoMode();
   const pins = demo ? Object.fromEntries(DEMO_STAFF.map((s) => [s.name, s.pin])) : {};
   return (
@@ -31,7 +33,9 @@ export default async function EnterPage() {
         <div>
           <p className="text-humo">Turno de hoy en</p>
           <h1 className="mt-1 text-4xl font-extrabold leading-none tracking-tight [font-stretch:112%] sm:text-5xl">{biz.name}</h1>
+          {biz.sede ? <p className="mt-2 text-2xl font-bold text-tinto-2">Sede {biz.sede}</p> : null}
           <p className="mt-3 text-lg text-tinto-2">Toca tu nombre y escribe tu PIN. Para empezar o terminar tu turno, usa Marcar turno.</p>
+          {sedes.length > 1 ? <SedePicker sedes={sedes.map((s) => ({ id: s.id, sede: s.sede || s.name }))} current={biz.id} /> : null}
         </div>
         <PinLogin staff={staff.map((s) => ({ ...s, roleLabel: ROLE_LABEL[s.role] ?? s.role, hint: pins[s.name] ?? null, since: onShift.get(s.id) ?? null }))} />
       </div>

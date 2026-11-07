@@ -1,6 +1,6 @@
 import "server-only";
 import { checkTotals } from "../core/pricing";
-import { audit, bump, getBusiness, type Business } from "./business";
+import { audit, bump, getBusiness, type Business, nextNumber } from "./business";
 import { checkLabel, loadCheck, moveStock, type Mod } from "./checks";
 import { getDb } from "./db";
 import { UserError } from "./errors";
@@ -138,11 +138,10 @@ export async function approveRequest(staff: Staff, requestId: string) {
       let number = open?.number ?? 0;
       if (open) checkId = open.id;
       else {
-        const row = await tx.one<{ id: string; number: number }>("insert into checks (business_id, table_id, kind, guests, opened_by) values ($1, $2, 'mesa', 2, $3) returning id, number", [
-          staff.business_id,
-          req.table_id,
-          staff.id,
-        ]);
+        const row = await tx.one<{ id: string; number: number }>(
+          "insert into checks (business_id, number, table_id, kind, guests, opened_by) values ($1, $2, $3, 'mesa', 2, $4) returning id, number",
+          [staff.business_id, await nextNumber(tx, staff.business_id, "check"), req.table_id, staff.id],
+        );
         checkId = row!.id;
         number = row!.number;
       }

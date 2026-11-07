@@ -15,6 +15,8 @@ export interface Settings {
   receipt: { footer: string };
   alerts: { voidLimit: number; discountLimitPct: number; ownerWhatsapp: string };
   qr: { enabled: boolean; requireApproval: boolean; payAtTable: boolean };
+  /** Domicilios: canales activos y la comisión pactada con cada plataforma (% del valor del pedido) */
+  channels: { rappi: boolean; rappiPct: number; didi: boolean; didiPct: number; propio: boolean };
   /** Costo del equipo: carga sobre el salario, alerta de mano de obra y turnos del local */
   labor: { exonerated: boolean; arlClass: number; alertPct: number; turnos: Turno[] };
 }
@@ -31,6 +33,7 @@ export const DEFAULT_SETTINGS: Settings = {
   receipt: { footer: "La propina es voluntaria. ¡Gracias por venir!" },
   alerts: { voidLimit: 20000, discountLimitPct: 10, ownerWhatsapp: "" },
   qr: { enabled: true, requireApproval: true, payAtTable: true },
+  channels: { rappi: true, rappiPct: 25, didi: false, didiPct: 20, propio: true },
   labor: { exonerated: true, arlClass: 1, alertPct: 35, turnos: [{ name: "Día", from: "06:00" }, { name: "Noche", from: "17:00" }] },
 };
 
@@ -57,6 +60,8 @@ export function mergeSettings(saved: unknown): Settings {
   s.tips.suggestedPct = Math.min(10, Math.max(0, Math.round(s.tips.suggestedPct)));
   s.tax.rate = Math.min(19, Math.max(0, s.tax.rate));
   s.happyHour.days = s.happyHour.days.filter((d) => Number.isInteger(d) && d >= 1 && d <= 7);
+  s.channels.rappiPct = Math.min(50, Math.max(0, Math.round(s.channels.rappiPct)));
+  s.channels.didiPct = Math.min(50, Math.max(0, Math.round(s.channels.didiPct)));
   s.labor.arlClass = Math.min(5, Math.max(1, Math.round(s.labor.arlClass) || 1));
   s.labor.alertPct = Math.min(60, Math.max(10, Math.round(s.labor.alertPct) || 35));
   s.labor.turnos = cleanTurnos(s.labor.turnos);
@@ -91,6 +96,17 @@ export const METHOD_LABEL: Record<string, string> = {
   breb: "Bre-B",
   tarjeta: "Tarjeta",
   daviplata: "Daviplata",
+  plataforma: "Pagado en la plataforma",
 };
+
+export const CHANNEL_LABEL: Record<string, string> = { local: "En el local", rappi: "Rappi", didi: "DiDi Food", propio: "Domicilio propio" };
+/** Etiqueta corta para tiquetes y cuentas: el código P- ya dice que es domicilio propio */
+export const CHANNEL_SHORT: Record<string, string> = { rappi: "Rappi", didi: "DiDi", propio: "Domicilio" };
+export const CHANNEL_COLOR: Record<string, string> = { local: "#6b6660", rappi: "#FF441F", didi: "#FC4C02", propio: "#0B7A55" };
+
+/** Comisión de la plataforma, en % del valor del pedido. */
+export function channelPct(s: Settings, channel: string) {
+  return channel === "rappi" ? s.channels.rappiPct : channel === "didi" ? s.channels.didiPct : 0;
+}
 
 export const STATION_LABEL: Record<string, string> = { barra: "Barra", cocina: "Cocina" };
