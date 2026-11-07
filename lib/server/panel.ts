@@ -60,15 +60,21 @@ export async function createProduct(staff: Staff, input: { name: string; categor
 
 export async function listStaff(bizId: string) {
   const db = await getDb();
-  return db.query<{ id: string; name: string; role: string; color: string; active: boolean }>("select id, name, role, color, active from staff where business_id = $1 order by active desc, created_at", [bizId]);
+  return db.query<{ id: string; name: string; role: string; color: string; active: boolean; pay_kind: "salario" | "hora"; pay_amount: number }>(
+    "select id, name, role, color, active, pay_kind, pay_amount from staff where business_id = $1 order by active desc, created_at",
+    [bizId],
+  );
 }
 
-export async function saveStaff(actor: Staff, input: { id?: string; name: string; role: string; pin?: string; active?: boolean }) {
+export async function saveStaff(actor: Staff, input: { id?: string; name: string; role: string; pin?: string; active?: boolean; payKind?: string; payAmount?: number }) {
   if (!can.manage(actor)) throw new UserError("Solo el dueño o el administrador manejan el equipo");
   const name = input.name.trim();
   if (name.length < 2) throw new UserError("Escribe el nombre");
   if (!["owner", "admin", "cashier", "waiter", "bar"].includes(input.role)) throw new UserError("Elige un rol");
   if (input.pin !== undefined && input.pin !== "" && !/^\d{4}$/.test(input.pin)) throw new UserError("El PIN es de 4 números");
+  const payKind = input.payKind === "hora" ? "hora" : "salario";
+  const payAmount = Math.round(Number(input.payAmount ?? 0));
+  if (!Number.isFinite(payAmount) || payAmount < 0 || payAmount > (payKind === "hora" ? 500_000 : 100_000_000)) throw new UserError(payKind === "hora" ? "Revisa el valor de la hora" : "Revisa el salario");
   const db = await getDb();
   await db.tx(async (tx) => {
     const others = await tx.query<{ id: string; pin_hash: string }>("select id, pin_hash from staff where business_id = $1 and active", [actor.business_id]);
@@ -77,21 +83,30 @@ export async function saveStaff(actor: Staff, input: { id?: string; name: string
       const row = await tx.one("select 1 from staff where id = $1 and business_id = $2", [input.id, actor.business_id]);
       if (!row) throw new UserError("Persona no encontrada");
       if (input.id === actor.id && input.active === false) throw new UserError("No puedes desactivarte a ti mismo");
-      await tx.query("update staff set name = $2, role = $3, active = coalesce($4, active) where id = $1", [input.id, name.slice(0, 40), input.role, input.active ?? null]);
+      await tx.query("update staff set name = $2, role = $3, active = coalesce($4, active), pay_kind = $5, pay_amount = $6 where id = $1", [
+        input.id,
+        name.slice(0, 40),
+        input.role,
+        input.active ?? null,
+        payKind,
+        payAmount,
+      ]);
       if (input.pin) await tx.query("update staff set pin_hash = $2 where id = $1", [input.id, pinHash(input.id, input.pin)]);
     } else {
       if (!input.pin) throw new UserError("Asigna un PIN de 4 números");
       const id = crypto.randomUUID();
-      await tx.query("insert into staff (id, business_id, name, role, pin_hash, color) values ($1, $2, $3, $4, $5, $6)", [
+      await tx.query("insert into staff (id, business_id, name, role, pin_hash, color, pay_kind, pay_amount) values ($1, $2, $3, $4, $5, $6, $7, $8)", [
         id,
         actor.business_id,
         name.slice(0, 40),
         input.role,
         pinHash(id, input.pin),
         ["#1E4FB8", "#0B7A55", "#D2232A", "#B07800", "#7A4A2A", "#9B3D8F"][others.length % 6],
+        payKind,
+        payAmount,
       ]);
     }
-    await audit(tx, actor.business_id, actor.id, "staff", { name, role: input.role });
+    await audit(tx, actor.business_id, actor.id, "staff", { name, role: input.role, payKind, payAmount });
   });
 }
 

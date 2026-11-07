@@ -5,7 +5,7 @@ import { getDb } from "./db";
 // Hora de Bogotá a partir de un timestamptz, sin depender de la zona horaria de la sesión
 const BOGOTA = (col: string) => `((${col} at time zone 'UTC') - interval '5 hours')`;
 // Jornada: lo de antes de las 5:00 a. m. cuenta para el día anterior
-const JORNADA = (col: string) => `(((${col} at time zone 'UTC') - interval '${5 + JORNADA_CUTOFF_HOUR} hours')::date)`;
+export const JORNADA = (col: string) => `(((${col} at time zone 'UTC') - interval '${5 + JORNADA_CUTOFF_HOUR} hours')::date)`;
 
 export interface DayReport {
   dayKey: string;

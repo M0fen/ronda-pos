@@ -17,7 +17,7 @@ export function getDb() {
   return connect(bootstrap);
 }
 
-/** Borra todo y vuelve a cargar el café bar de ejemplo. Solo en modo demo. */
+/** Borra todo y vuelve a cargar el local de ejemplo. Solo en modo demo. */
 export async function resetDemo() {
   if (!isDemoMode()) throw new Error("Solo disponible en modo demo");
   const db = await getDb();

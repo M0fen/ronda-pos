@@ -60,7 +60,8 @@ async function throttle(key: string) {
   };
 }
 
-export async function loginWithPin(staffId: string, pin: string) {
+/** Verifica el PIN de una persona sin abrir sesión (también sirve para marcar el turno). */
+export async function checkPin(staffId: string, pin: string): Promise<Staff> {
   const t = await throttle("pin");
   const db = await getDb();
   const staff = await db.one<Staff & { pin_hash: string }>("select id, business_id, name, role, color, pin_hash from staff where id = $1 and active", [staffId]);
@@ -70,6 +71,11 @@ export async function loginWithPin(staffId: string, pin: string) {
     throw new UserError("PIN incorrecto");
   }
   t.ok();
+  return { id: staff.id, business_id: staff.business_id, name: staff.name, role: staff.role, color: staff.color };
+}
+
+export async function loginWithPin(staffId: string, pin: string) {
+  const staff = await checkPin(staffId, pin);
   const token = await createSessionToken({ id: staff.id, biz: staff.business_id, role: staff.role });
   (await cookies()).set(SESSION_COOKIE, token, {
     httpOnly: true,

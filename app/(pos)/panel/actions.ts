@@ -5,6 +5,7 @@ import { can, requireStaff } from "@/lib/server/auth";
 import { resetDemo } from "@/lib/server/db";
 import { safely, UserError } from "@/lib/server/errors";
 import { stockMove } from "@/lib/server/inventory";
+import { closeShift } from "@/lib/server/labor";
 import { createProduct, saveSettings, saveStaff, updateProduct } from "@/lib/server/panel";
 import type { Settings } from "@/lib/settings";
 
@@ -23,9 +24,14 @@ export async function stockMoveAction(input: { ingredientId: string; kind: "comp
   return safely(() => stockMove(staff, input), input.kind === "compra" ? "Compra registrada" : input.kind === "merma" ? "Merma registrada" : "Conteo guardado");
 }
 
-export async function saveStaffAction(input: { id?: string; name: string; role: string; pin?: string; active?: boolean }) {
+export async function saveStaffAction(input: { id?: string; name: string; role: string; pin?: string; active?: boolean; payKind?: string; payAmount?: number }) {
   const staff = await requireStaff();
   return safely(() => saveStaff(staff, input), "Equipo actualizado");
+}
+
+export async function closeShiftAction(shiftId: string, hhmm: string) {
+  const staff = await requireStaff();
+  return safely(() => closeShift(staff, shiftId, hhmm), "Turno cerrado");
 }
 
 export async function saveSettingsAction(next: Settings) {

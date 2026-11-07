@@ -7,7 +7,7 @@ import { btn } from "@/components/ui";
 
 export const metadata: Metadata = {
   title: "Ronda · POS para cafés y bares",
-  description: "Mesas, barra sin papel, factura electrónica, Bre-B y sellos para tus clientes, en la tablet que ya tienes.",
+  description: "Mesas, barra y cocina sin papel, factura electrónica, Bre-B, sellos para tus clientes y lo que cuesta cada turno, en la tablet que ya tienes.",
 };
 
 const WHATSAPP = process.env.NEXT_PUBLIC_SALES_WHATSAPP ?? "573122143556";
@@ -27,7 +27,7 @@ const FEATURES = [
   },
   {
     title: "Cobrar toma segundos",
-    text: "Pregunta la propina como pide la ley, divide la cuenta, calcula las vueltas y recibe tarjeta, Nequi o Bre-B. Cada venta sale con factura electrónica.",
+    text: "Pregunta la propina como pide la ley, divide la cuenta, calcula las vueltas y recibe tarjeta, Nequi o Bre-B. Cada venta queda con su factura y su código QR.",
     shot: "/shots/cobro.webp",
   },
   {
@@ -38,8 +38,13 @@ const FEATURES = [
   },
   {
     title: "Inventario por trago y por gramo",
-    text: "Una botella son 25 tragos; un espresso, 18 gramos de café. Se descuenta solo, te dice qué comprar y cuántos días te alcanza.",
+    text: "Una botella son 25 tragos; una bandeja para compartir, 600 gramos de papa. Se descuenta solo, te dice qué comprar y cuántos días te alcanza.",
     shot: "/shots/inventario.webp",
+  },
+  {
+    title: "Sabes qué turno se paga solo",
+    text: "Cada quien marca su entrada y su salida con su PIN. Ronda cruza lo que cuesta el equipo, con recargos nocturnos, dominicales y festivos, con lo que vende cada turno, y te avisa antes de que alguien pase de 42 horas.",
+    shot: "/shots/rentabilidad.webp",
   },
   {
     title: "El dueño duerme tranquilo",
@@ -50,10 +55,11 @@ const FEATURES = [
 
 const FAQ = [
   ["¿Tengo que comprar equipos?", "No. Funciona en la tablet o el celular que ya tienes. Si quieres imprimir la comanda y la factura, sirve una impresora térmica de 80 mm de red."],
-  ["¿Qué pasa si se cae el internet?", "La app de la caja para Android, que se instala en tu local, sigue tomando pedidos, cobrando e imprimiendo sin conexión y sincroniza cuando vuelve. La factura electrónica queda en cola con el procedimiento de contingencia de la DIAN."],
-  ["¿Emite factura electrónica?", "Sí, cada venta sale con factura electrónica a través de un proveedor autorizado. Si el cliente pide la factura a su nombre, se pone su NIT o cédula en el cobro."],
+  ["¿Qué pasa si se cae el internet?", "Ronda trabaja en línea. Si se cae el internet del local, la tablet puede seguir con los datos de un celular."],
+  ["¿Emite factura electrónica?", "Sí, a través de un proveedor tecnológico autorizado por la DIAN, que se conecta cuando Ronda se instala en tu local. Si el cliente pide la factura a su nombre, se pone su NIT o cédula en el cobro. En la demo la factura es de prueba: se numera y lleva su código QR, pero no se envía a la DIAN."],
+  ["¿Cómo sabe lo que cuesta cada turno?", "Con el salario o el valor de la hora de cada persona y las horas que marca con su PIN. Suma los recargos nocturnos, dominicales y festivos de la ley vigente, la seguridad social y las prestaciones. Es una estimación para decidir turnos: la nómina la liquida tu contador."],
   ["¿Cómo funciona el pago con Bre-B?", "El cliente paga a la llave de tu negocio desde cualquier banco y la plata llega al instante. En la caja se registra con la referencia del pago."],
-  ["¿De quién son los datos?", "Tuyos. Los exportas cuando quieras. Los datos de tus clientes se guardan con su autorización, como pide la Ley 1581."],
+  ["¿De quién son los datos?", "Tuyos. Los datos de tus clientes se guardan solo con su autorización, como pide la Ley 1581."],
 ];
 
 export default function Landing() {
@@ -76,9 +82,9 @@ export default function Landing() {
 
       <section className="mx-auto grid max-w-6xl gap-10 px-4 pt-8 pb-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:pt-14">
         <div>
-          <h1 className="text-[clamp(2.6rem,7vw,4.8rem)] leading-[0.95] font-extrabold tracking-tight [font-stretch:115%]">Tu café bar en una tablet.</h1>
+          <h1 className="text-[clamp(2.6rem,7vw,4.8rem)] leading-[0.95] font-extrabold tracking-tight [font-stretch:115%]">Tu local en una tablet.</h1>
           <p className="mt-6 max-w-[34ch] text-xl leading-relaxed text-tinto-2">
-            Mesas, barra sin papel, factura electrónica, Bre-B y sellos para tus clientes, en la tablet o el celular que ya tienes.
+            Mesas, barra y cocina sin papel, factura electrónica, Bre-B, sellos para tus clientes y lo que cuesta cada turno, en la tablet o el celular que ya tienes.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link href="/entrar" className={btn("primary", "xl")}>
@@ -88,7 +94,7 @@ export default function Landing() {
               <MessageCircle size={20} /> Escribir por WhatsApp
             </a>
           </div>
-          <p className="mt-4 text-sm text-humo">La demo abre sin registro, con un café bar de ejemplo y el servicio en marcha.</p>
+          <p className="mt-4 text-sm text-humo">La demo abre sin registro, con la carta de Sr. Patata y el servicio en marcha.</p>
         </div>
         <div className="rounded-[32px] bg-[#e9ebe4] p-5 sm:p-7">
           <p className="mb-3 text-sm font-semibold text-tinto-2">Arma una ronda: toca los productos</p>
@@ -138,7 +144,7 @@ export default function Landing() {
 
       <section className="bg-tinto text-cal">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-6 px-4 py-14 sm:px-6">
-          <h2 className="max-w-[18ch] text-4xl font-extrabold tracking-tight [font-stretch:112%]">Pruébala con un café bar de verdad.</h2>
+          <h2 className="max-w-[18ch] text-4xl font-extrabold tracking-tight [font-stretch:112%]">Pruébala con la carta de un local de verdad.</h2>
           <div className="flex flex-wrap gap-3">
             <Link href="/entrar" className={btn("warn", "xl")}>
               Abrir la demo

@@ -1,14 +1,15 @@
 /**
- * Datos de ejemplo del café bar: carta, salón, equipo, insumos con recetas, clientes,
- * dos semanas de ventas y el servicio en curso. Ids estables (stableId) para que cualquier
- * instancia de la demo genere los mismos y los enlaces sirvan entre dispositivos.
- * Se importa desde scripts: no usa server-only.
+ * Datos de la demo: Sr. Patata, Pereira. Carta tomada de su menú público (precios redondeados),
+ * salón, equipo con su pago y sus turnos, insumos con recetas, clientes, dos semanas de ventas
+ * y el servicio en curso. Ids estables (stableId) para que cualquier instancia de la demo genere
+ * los mismos y los enlaces sirvan entre dispositivos. Se importa desde scripts: no usa server-only.
  */
 import { createHash } from "node:crypto";
 import type { Db } from "./db-core";
-import { checkTotals, splitTax, suggestedTip } from "./core/pricing";
-import { bogotaParts } from "./core/time";
-import { DEFAULT_SETTINGS } from "./settings";
+import { holidayName } from "./core/labor";
+import { checkTotals, suggestedTip } from "./core/pricing";
+import { addDays, bogotaParts, weekdayOf } from "./core/time";
+import { DEFAULT_SETTINGS, type Settings } from "./settings";
 
 export function stableId(key: string) {
   const h = createHash("sha1").update(`ronda:${key}`).digest("hex");
@@ -51,13 +52,45 @@ export async function bulkInsert(db: Pick<Db, "query">, table: string, cols: Col
 
 export const DEMO_BUSINESS_ID = stableId("biz:villa-verde");
 
+/** Ajustes del local de la demo. Nombre, Instagram y punto de la Circunvalar, de su perfil público. */
+export const DEMO_SETTINGS: Settings = {
+  ...DEFAULT_SETTINGS,
+  business: { name: "Sr. Patata", legalName: "Sr. Patata (demo)", nit: "000.000.000-0", address: "Cra. 13 #8-25, Circunvalar", city: "Pereira, Risaralda", phone: "", instagram: "@senorpatata_" },
+  theme: { primary: "#171310", accent: "#FFC20E" },
+  payments: { ...DEFAULT_SETTINGS.payments, nequiPhone: "300 000 0000", brebKey: "@srpatata" },
+  loyalty: { enabled: true, minPurchase: 30000, goal: 8, reward: "Una bebida de la casa", rewardMax: 7000 },
+  invoice: { prefix: "FESP", resolution: "Resolución DIAN de prueba (demo)", provider: "Factus", mode: "demo" },
+  receipt: { footer: "Maestría patatera. La propina es voluntaria. ¡Gracias por venir!" },
+  labor: { exonerated: true, arlClass: 1, alertPct: 35, turnos: [{ name: "Almuerzo", from: "11:00" }, { name: "Noche", from: "17:00" }] },
+};
+
+const MIN_WAGE = 1_750_905;
+
 export const DEMO_STAFF = [
-  { key: "andres", name: "Andrés", role: "owner", pin: "1234", color: "#1E4FB8" },
-  { key: "valentina", name: "Valentina", role: "cashier", pin: "2222", color: "#0B7A55" },
-  { key: "juanpablo", name: "Juan Pablo", role: "waiter", pin: "3333", color: "#D2232A" },
-  { key: "camila", name: "Camila", role: "waiter", pin: "4444", color: "#B07800" },
-  { key: "mateo", name: "Mateo", role: "bar", pin: "5555", color: "#7A4A2A" },
+  { key: "andres", name: "Andrés", role: "owner", pin: "1234", color: "#1E4FB8", pay: ["salario", 0] },
+  { key: "valentina", name: "Valentina", role: "cashier", pin: "2222", color: "#0B7A55", pay: ["salario", 1_900_000] },
+  { key: "juanpablo", name: "Juan Pablo", role: "waiter", pin: "3333", color: "#D2232A", pay: ["salario", MIN_WAGE] },
+  { key: "camila", name: "Camila", role: "waiter", pin: "4444", color: "#B07800", pay: ["salario", MIN_WAGE] },
+  { key: "mateo", name: "Mateo", role: "bar", pin: "5555", color: "#7A4A2A", pay: ["salario", 2_000_000] },
+  { key: "luisa", name: "Luisa", role: "bar", pin: "6666", color: "#9B3D8F", pay: ["salario", MIN_WAGE] },
+  { key: "sofia", name: "Sofía", role: "bar", pin: "7777", color: "#0E7490", pay: ["hora", 13_000] },
 ] as const;
+
+/** Horario de cada persona (1 = lunes … 7 = domingo). El viernes más reciente Luisa faltó y Mateo dobló (ver seedShifts). */
+const SCHEDULE: Record<string, { days: number[]; from: string; to: string }[]> = {
+  valentina: [{ days: [2, 3, 4, 5, 6, 7], from: "11:00", to: "18:00" }],
+  camila: [
+    { days: [1, 3, 4, 5, 6], from: "11:00", to: "18:00" },
+    { days: [2], from: "16:00", to: "23:00" },
+  ],
+  juanpablo: [{ days: [1, 3, 4, 5, 6, 7], from: "16:00", to: "23:30" }],
+  mateo: [{ days: [2, 3, 4, 5, 6, 7], from: "10:30", to: "18:30" }],
+  luisa: [{ days: [1, 2, 3, 4, 5, 6], from: "16:00", to: "23:00" }],
+  sofia: [
+    { days: [1], from: "10:30", to: "18:30" },
+    { days: [7], from: "17:00", to: "23:00" },
+  ],
+};
 
 const ZONES = [
   { key: "salon", name: "Salón" },
@@ -88,100 +121,82 @@ const TABLES: { n: string; zone: string; seats: number; x: number; y: number; sh
 ];
 
 const CATEGORIES = [
-  { key: "cafe", name: "Café", color: "#7A4A2A", station: "barra" },
-  { key: "sin-alcohol", name: "Sin alcohol", color: "#0B7A55", station: "barra" },
+  { key: "patatas", name: "Patatas", color: "#E0A100", station: "cocina" },
+  { key: "compartir", name: "Para compartir", color: "#C2541B", station: "cocina" },
+  { key: "burgers", name: "Burgers", color: "#7A4A2A", station: "cocina" },
+  { key: "combos", name: "Combos", color: "#D2232A", station: "cocina" },
+  { key: "bebidas", name: "Bebidas", color: "#0B7A55", station: "barra" },
   { key: "cervezas", name: "Cervezas", color: "#B07800", station: "barra" },
-  { key: "cocteles", name: "Cócteles", color: "#D2232A", station: "barra" },
-  { key: "licores", name: "Licores", color: "#1E4FB8", station: "barra" },
-  { key: "picar", name: "Para picar", color: "#C2541B", station: "cocina" },
-  { key: "postres", name: "Postres", color: "#9B3D8F", station: "cocina" },
 ];
 
 const MOD_GROUPS = [
-  { key: "leche", name: "Leche", min: 1, max: 1, options: [["Entera", 0, true], ["Deslactosada", 0], ["Almendras", 2500], ["Avena", 2500]] },
-  { key: "tamano", name: "Tamaño", min: 0, max: 1, options: [["Grande", 2000]] },
-  { key: "extras", name: "Extras", min: 0, max: 3, options: [["Shot extra", 2500], ["Crema batida", 1500], ["Canela", 0], ["Sin azúcar", 0]] },
-  { key: "preparacion", name: "Preparación", min: 0, max: 1, options: [["Michelada", 2500], ["Michelada de maracuyá", 3500]] },
-  { key: "sabor", name: "Sabor", min: 1, max: 1, options: [["Mora", 0, true], ["Lulo", 0], ["Maracuyá", 0], ["Mango", 0], ["Fresa", 0]] },
-  { key: "salsa", name: "Salsa", min: 1, max: 1, options: [["BBQ", 0, true], ["Búfalo", 0], ["Miel mostaza", 0]] },
+  { key: "salsa", name: "Salsa", min: 1, max: 1, options: [["De la casa", 0, true], ["Queso", 0], ["BBQ", 0], ["Ahumada", 0], ["Rosada", 0]] },
+  { key: "barbacoa", name: "Barbacoa", min: 1, max: 1, options: [["Clásica", 0, true], ["Dulce picante", 0]] },
+  { key: "bebida", name: "Bebida del combo", min: 1, max: 1, options: [["Coca-Cola", 0, true], ["Coca-Cola sin azúcar", 0]] },
+  { key: "adiciones", name: "Adiciones", min: 0, max: 3, options: [["Tocineta", 5000], ["Queso cheddar", 4000], ["Carne smash", 7000], ["Salsa de queso", 3000]] },
+  { key: "preparacion", name: "Preparación", min: 0, max: 1, options: [["Michelada", 2500]] },
 ] as const;
 
 const INGREDIENTS: { key: string; name: string; unit: "g" | "ml" | "und"; stock: number; min: number; cost: number; pack?: [number, string]; kind?: string }[] = [
-  { key: "cafe", name: "Café en grano de la casa", unit: "g", stock: 4200, min: 1500, cost: 60, pack: [500, "bolsa"] },
-  { key: "leche", name: "Leche entera", unit: "ml", stock: 16000, min: 6000, cost: 4.8, pack: [1000, "litro"] },
-  { key: "chocolate", name: "Chocolate en polvo", unit: "g", stock: 1200, min: 400, cost: 30, pack: [1000, "kilo"] },
-  { key: "helado", name: "Helado de vainilla", unit: "g", stock: 2400, min: 1000, cost: 22, pack: [1000, "kilo"] },
-  { key: "coco", name: "Crema de coco", unit: "ml", stock: 1800, min: 1000, cost: 18, pack: [400, "lata"] },
-  { key: "pulpa", name: "Pulpa de fruta", unit: "g", stock: 3000, min: 1500, cost: 12, pack: [1000, "kilo"] },
+  { key: "papa", name: "Papa a la francesa", unit: "g", stock: 26000, min: 10000, cost: 9, pack: [2500, "bolsa"] },
+  { key: "carne", name: "Carne de res 150 g", unit: "und", stock: 64, min: 40, cost: 3900 },
+  { key: "smash", name: "Carne smash 80 g", unit: "und", stock: 130, min: 80, cost: 2100 },
+  { key: "pan", name: "Pan brioche", unit: "und", stock: 70, min: 48, cost: 1300 },
+  { key: "cheddar", name: "Queso cheddar en tajada", unit: "und", stock: 180, min: 100, cost: 550 },
+  { key: "mozzarella", name: "Queso mozzarella", unit: "g", stock: 7000, min: 3000, cost: 28, pack: [1000, "kilo"] },
+  { key: "salsa-queso", name: "Salsa de queso", unit: "g", stock: 6000, min: 3000, cost: 16, pack: [1000, "kilo"] },
+  { key: "tocineta", name: "Tocineta ahumada", unit: "g", stock: 2600, min: 2000, cost: 46, pack: [1000, "kilo"] },
+  { key: "solomito", name: "Solomito", unit: "g", stock: 4200, min: 2500, cost: 48, pack: [1000, "kilo"] },
+  { key: "cerdo", name: "Cerdo caramelizado", unit: "g", stock: 3800, min: 2000, cost: 27, pack: [1000, "kilo"] },
+  { key: "costilla", name: "Costilla de res desmechada", unit: "g", stock: 2600, min: 2000, cost: 36, pack: [1000, "kilo"] },
+  { key: "nuggets", name: "Nuggets de pollo", unit: "und", stock: 240, min: 120, cost: 480 },
+  { key: "pollo", name: "Pollo crunchy", unit: "g", stock: 4000, min: 2000, cost: 25, pack: [1000, "kilo"] },
+  { key: "salsas", name: "Salsas de la casa", unit: "g", stock: 7000, min: 3000, cost: 9, pack: [1000, "kilo"] },
+  { key: "cebolla", name: "Cebolla morada", unit: "g", stock: 3000, min: 1500, cost: 5 },
+  { key: "verduras", name: "Lechuga y tomate", unit: "g", stock: 2500, min: 1500, cost: 7 },
+  { key: "coca", name: "Coca-Cola lata 235 ml", unit: "und", stock: 110, min: 48, cost: 1900 },
+  { key: "coca-zero", name: "Coca-Cola sin azúcar lata", unit: "und", stock: 40, min: 24, cost: 1900 },
+  { key: "hatsu", name: "Té Hatsu 250 ml", unit: "und", stock: 20, min: 24, cost: 3300 },
   { key: "limon", name: "Limón", unit: "und", stock: 70, min: 40, cost: 400 },
-  { key: "hierbabuena", name: "Hierbabuena", unit: "g", stock: 250, min: 150, cost: 20 },
-  { key: "tonica", name: "Agua tónica", unit: "und", stock: 30, min: 24, cost: 3200 },
-  { key: "aguardiente", name: "Aguardiente Cristal", unit: "ml", stock: 6750, min: 3000, cost: 70, pack: [750, "botella"], kind: "licor" },
-  { key: "ron-caldas", name: "Ron Viejo de Caldas", unit: "ml", stock: 4500, min: 2250, cost: 78, pack: [750, "botella"], kind: "licor" },
-  { key: "ron-blanco", name: "Ron blanco", unit: "ml", stock: 2100, min: 1500, cost: 60, pack: [750, "botella"], kind: "licor" },
-  { key: "ginebra", name: "Ginebra", unit: "ml", stock: 1300, min: 1400, cost: 120, pack: [700, "botella"], kind: "licor" },
-  { key: "tequila", name: "Tequila", unit: "ml", stock: 1500, min: 1400, cost: 110, pack: [750, "botella"], kind: "licor" },
-  { key: "vodka", name: "Vodka", unit: "ml", stock: 1400, min: 750, cost: 85, pack: [750, "botella"], kind: "licor" },
-  { key: "licor-cafe", name: "Licor de café", unit: "ml", stock: 700, min: 350, cost: 95, pack: [700, "botella"], kind: "licor" },
-  { key: "club", name: "Cerveza Club Colombia", unit: "und", stock: 64, min: 48, cost: 3300, kind: "cerveza" },
-  { key: "poker", name: "Cerveza Poker", unit: "und", stock: 90, min: 72, cost: 2600, kind: "cerveza" },
-  { key: "aguila", name: "Cerveza Águila", unit: "und", stock: 40, min: 48, cost: 2600, kind: "cerveza" },
-  { key: "corona", name: "Cerveza Corona", unit: "und", stock: 22, min: 24, cost: 5200, kind: "cerveza" },
-  { key: "empanadas", name: "Empanadas", unit: "und", stock: 54, min: 30, cost: 1100 },
-  { key: "pandebono", name: "Pandebonos", unit: "und", stock: 36, min: 30, cost: 900 },
-  { key: "alitas", name: "Alitas de pollo", unit: "g", stock: 6000, min: 3000, cost: 24, pack: [1000, "kilo"] },
-  { key: "queso", name: "Queso campesino", unit: "g", stock: 1800, min: 1000, cost: 22, pack: [1000, "kilo"] },
-  { key: "pan", name: "Pan artesanal", unit: "und", stock: 18, min: 12, cost: 1800 },
-  { key: "torta", name: "Porción de torta de chocolate", unit: "und", stock: 10, min: 6, cost: 3500 },
-  { key: "cheesecake", name: "Porción de cheesecake", unit: "und", stock: 5, min: 6, cost: 4200 },
+  { key: "club", name: "Cerveza Club Colombia", unit: "und", stock: 60, min: 36, cost: 3300, kind: "cerveza" },
+  { key: "poker", name: "Cerveza Poker", unit: "und", stock: 72, min: 48, cost: 2600, kind: "cerveza" },
+  { key: "corona", name: "Cerveza Corona", unit: "und", stock: 20, min: 24, cost: 5200, kind: "cerveza" },
 ];
 
 type P = { key: string; cat: string; name: string; price: number; happy?: number; desc?: string; mods?: string[]; recipe?: [string, number][]; fav?: boolean; station?: string; tax?: number };
 
+// Papas: 300 g por cono, 600 g por bandeja, 200 g de acompañamiento
+const burger: [string, number][] = [["carne", 1], ["pan", 1], ["mozzarella", 40], ["verduras", 40], ["salsas", 20]];
+const smash2: [string, number][] = [["smash", 2], ["pan", 1], ["cheddar", 2], ["tocineta", 30], ["salsas", 20]];
+
 const PRODUCTS: P[] = [
-  { key: "tinto", cat: "cafe", name: "Tinto campesino", price: 3500, desc: "Café de la casa, colado como en finca.", recipe: [["cafe", 10]], fav: true },
-  { key: "espresso", cat: "cafe", name: "Espresso", price: 5000, mods: ["extras"], recipe: [["cafe", 18]] },
-  { key: "americano", cat: "cafe", name: "Americano", price: 5500, mods: ["tamano", "extras"], recipe: [["cafe", 18]] },
-  { key: "capuchino", cat: "cafe", name: "Capuchino", price: 8500, mods: ["leche", "tamano", "extras"], recipe: [["cafe", 18], ["leche", 150]], fav: true },
-  { key: "latte", cat: "cafe", name: "Latte", price: 9000, mods: ["leche", "tamano", "extras"], recipe: [["cafe", 18], ["leche", 220]], fav: true },
-  { key: "mocaccino", cat: "cafe", name: "Mocaccino", price: 10000, mods: ["leche", "tamano", "extras"], recipe: [["cafe", 18], ["leche", 180], ["chocolate", 15]] },
-  { key: "v60", cat: "cafe", name: "Café de origen en V60", price: 12000, desc: "Finca de Santuario, Risaralda. Notas a panela y frutos rojos.", recipe: [["cafe", 20]] },
-  { key: "cold-brew", cat: "cafe", name: "Cold brew", price: 10500, recipe: [["cafe", 25]] },
-  { key: "affogato", cat: "cafe", name: "Affogato", price: 12000, recipe: [["cafe", 18], ["helado", 100]] },
-  { key: "limonada-coco", cat: "sin-alcohol", name: "Limonada de coco", price: 11000, recipe: [["coco", 120], ["limon", 1]], fav: true },
-  { key: "jugo", cat: "sin-alcohol", name: "Jugo natural", price: 8000, mods: ["sabor"], recipe: [["pulpa", 150]] },
-  { key: "soda", cat: "sin-alcohol", name: "Soda italiana", price: 10000 },
-  { key: "aromatica", cat: "sin-alcohol", name: "Aromática de frutas", price: 5000 },
-  { key: "agua", cat: "sin-alcohol", name: "Agua", price: 4000 },
+  { key: "solomito-cheese", cat: "patatas", name: "Solomito Cheese", price: 39900, desc: "Papas con solomito, tocineta, cebolla morada a la parrilla, cheddar, barbacoa y salsa de queso.", recipe: [["papa", 300], ["solomito", 120], ["tocineta", 30], ["cebolla", 30], ["cheddar", 2], ["salsa-queso", 60], ["salsas", 30]], fav: true },
+  { key: "express-cerdo", cat: "patatas", name: "Patata Express cerdo caramelizado", price: 39900, desc: "Cono de papas con cerdo caramelizado, mozzarella, barbacoa y salsa de queso.", recipe: [["papa", 300], ["cerdo", 120], ["mozzarella", 50], ["salsa-queso", 60], ["salsas", 30]], fav: true },
+  { key: "express-costilla", cat: "patatas", name: "Patata Express costilla de res", price: 42000, desc: "Cono de papas con costilla desmechada, mozzarella, salsa ahumada y salsa de queso.", recipe: [["papa", 300], ["costilla", 130], ["mozzarella", 50], ["salsa-queso", 60], ["salsas", 30]] },
+  { key: "express-nuggets", cat: "patatas", name: "Patata Express nuggets", price: 41500, desc: "Cono de papas con 10 nuggets de pollo, mozzarella, salsa rosada y salsa de queso.", recipe: [["papa", 300], ["nuggets", 10], ["mozzarella", 50], ["salsa-queso", 60], ["salsas", 30]] },
+  { key: "antojo", cat: "patatas", name: "Antojo de patatas", price: 17000, desc: "Papas a la francesa crocantes con la salsa que elijas.", mods: ["salsa"], recipe: [["papa", 250], ["salsas", 40]], fav: true },
+  { key: "trilogia", cat: "compartir", name: "Bandeja trilogía", price: 70500, desc: "Papas con cerdo caramelizado, costilla de res, tocineta, queso y salsa ahumada.", recipe: [["papa", 600], ["cerdo", 120], ["costilla", 120], ["tocineta", 50], ["mozzarella", 80], ["salsas", 60]], fav: true },
+  { key: "cuatro-carnes", cat: "compartir", name: "Bandeja 4 carnes smash", price: 79000, desc: "Papas con cuatro carnes smash, cheddar, barbacoa, salsa ahumada y tocineta.", recipe: [["papa", 600], ["smash", 4], ["cheddar", 4], ["tocineta", 50], ["salsas", 80]] },
+  { key: "bandeja-crunchy", cat: "compartir", name: "Bandeja pollo crunchy", price: 63500, desc: "Papas con pollo crunchy, salsa de queso, mozzarella y barbacoa.", mods: ["barbacoa"], recipe: [["papa", 600], ["pollo", 250], ["salsa-queso", 100], ["mozzarella", 80], ["salsas", 60]] },
+  { key: "bandeja-solomito", cat: "compartir", name: "Bandeja solomito", price: 71500, desc: "Papas con solomito sellado, salsa de queso, tocineta, cebolla a la parrilla y barbacoa.", recipe: [["papa", 600], ["solomito", 250], ["salsa-queso", 100], ["tocineta", 60], ["cebolla", 60], ["salsas", 60]] },
+  { key: "compartir-nuggets", cat: "compartir", name: "Para compartir nuggets y tocineta", price: 70500, desc: "Papas con nuggets, tocineta, salsa de queso, mozzarella y salsa ahumada.", recipe: [["papa", 600], ["nuggets", 16], ["tocineta", 60], ["salsa-queso", 100], ["mozzarella", 80], ["salsas", 50]] },
+  { key: "cheese-clasica", cat: "burgers", name: "Cheese burger clásica", price: 30500, desc: "Carne de 150 g, pan con mantequilla, mozzarella, salsa de la casa, tomate y lechuga.", mods: ["adiciones"], recipe: burger, fav: true },
+  { key: "smash-doble", cat: "burgers", name: "Burger smash doble", price: 38000, desc: "Doble carne aplastada, doble cheddar, tocineta y salsa de la casa.", mods: ["adiciones"], recipe: smash2, fav: true },
+  { key: "mega-smash", cat: "burgers", name: "Mega smash (4 carnes)", price: 44000, desc: "Cuatro carnes smash, doble cheddar, tocineta y salsa de la casa.", mods: ["adiciones"], recipe: [["smash", 4], ["pan", 1], ["cheddar", 2], ["tocineta", 40], ["salsas", 25]] },
+  { key: "mega-burger", cat: "burgers", name: "Mega burger doble carne", price: 43500, desc: "Doble carne artesanal, doble queso americano, tomate, lechuga y salsa de la casa.", mods: ["adiciones"], recipe: [["carne", 2], ["pan", 1], ["cheddar", 2], ["verduras", 40], ["salsas", 25]] },
+  { key: "umami", cat: "burgers", name: "Umami burger", price: 45500, desc: "Doble smash, queso glaseado en mermelada de rocoto ahumado, tocineta, doble cheddar y papa fosforito.", mods: ["adiciones"], recipe: [...smash2, ["papa", 40]] },
+  { key: "clasica-papas", cat: "burgers", name: "Burger clásica con papas", price: 38000, desc: "Con mozzarella, tomate, lechuga y la salsa que elijas.", mods: ["salsa"], recipe: [...burger, ["papa", 200]] },
+  { key: "combo-burger", cat: "combos", name: "Combo burger + papas + Coca-Cola", price: 50500, mods: ["bebida"], recipe: [...burger, ["papa", 200], ["coca", 1]], fav: true },
+  { key: "combo-smash", cat: "combos", name: "Combo smash doble + papas + bebida", price: 52000, mods: ["bebida"], recipe: [...smash2, ["papa", 200], ["coca", 1]] },
+  { key: "combo-pareja", cat: "combos", name: "2 burgers, 2 papas y 2 bebidas", price: 77000, desc: "Para dos.", recipe: [["carne", 2], ["pan", 2], ["mozzarella", 80], ["verduras", 80], ["salsas", 40], ["papa", 400], ["coca", 2]] },
+  { key: "coca", cat: "bebidas", name: "Coca-Cola lata", price: 5000, recipe: [["coca", 1]], fav: true },
+  { key: "coca-zero", cat: "bebidas", name: "Coca-Cola sin azúcar lata", price: 5000, recipe: [["coca-zero", 1]] },
+  { key: "hatsu", cat: "bebidas", name: "Té Hatsu", price: 6500, recipe: [["hatsu", 1]] },
+  { key: "limonada", cat: "bebidas", name: "Limonada natural", price: 7000, recipe: [["limon", 2]] },
+  { key: "agua", cat: "bebidas", name: "Agua", price: 4000 },
   { key: "club", cat: "cervezas", name: "Club Colombia", price: 7500, happy: 5900, mods: ["preparacion"], recipe: [["club", 1]], fav: true },
-  { key: "poker", cat: "cervezas", name: "Poker", price: 6000, happy: 4500, mods: ["preparacion"], recipe: [["poker", 1]], fav: true },
-  { key: "aguila", cat: "cervezas", name: "Águila", price: 6000, happy: 4500, mods: ["preparacion"], recipe: [["aguila", 1]] },
+  { key: "poker", cat: "cervezas", name: "Poker", price: 6000, happy: 4500, mods: ["preparacion"], recipe: [["poker", 1]] },
   { key: "corona", cat: "cervezas", name: "Corona", price: 12000, recipe: [["corona", 1]] },
-  { key: "artesanal", cat: "cervezas", name: "Cerveza artesanal de la región", price: 14000, desc: "Pregunta cuál llegó esta semana." },
-  { key: "cubetazo", cat: "cervezas", name: "Cubetazo Poker x6", price: 32000, recipe: [["poker", 6]] },
-  { key: "mojito", cat: "cocteles", name: "Mojito", price: 26000, happy: 19900, recipe: [["ron-blanco", 60], ["limon", 1], ["hierbabuena", 8]], fav: true },
-  { key: "margarita", cat: "cocteles", name: "Margarita", price: 27000, happy: 19900, recipe: [["tequila", 60], ["limon", 1]] },
-  { key: "gin-tonic", cat: "cocteles", name: "Gin tonic", price: 30000, happy: 22900, recipe: [["ginebra", 60], ["tonica", 1], ["limon", 0.5]] },
-  { key: "espresso-martini", cat: "cocteles", name: "Espresso martini", price: 29000, happy: 21900, recipe: [["cafe", 18], ["licor-cafe", 30], ["vodka", 45]] },
-  { key: "carajillo", cat: "cocteles", name: "Carajillo", price: 22000, recipe: [["cafe", 18], ["licor-cafe", 45]] },
-  { key: "canelazo", cat: "cocteles", name: "Canelazo de aguardiente", price: 18000, recipe: [["aguardiente", 45]] },
-  { key: "trago-aguardiente", cat: "licores", name: "Trago de aguardiente Cristal", price: 8000, recipe: [["aguardiente", 30]] },
-  { key: "media-aguardiente", cat: "licores", name: "Media de aguardiente Cristal", price: 65000, recipe: [["aguardiente", 375]] },
-  { key: "botella-aguardiente", cat: "licores", name: "Botella de aguardiente Cristal", price: 115000, recipe: [["aguardiente", 750]] },
-  { key: "trago-ron", cat: "licores", name: "Trago de ron Viejo de Caldas", price: 9000, recipe: [["ron-caldas", 30]] },
-  { key: "media-ron", cat: "licores", name: "Media de ron Viejo de Caldas", price: 75000, recipe: [["ron-caldas", 375]] },
-  { key: "botella-ron", cat: "licores", name: "Botella de ron Viejo de Caldas", price: 130000, recipe: [["ron-caldas", 750]] },
-  { key: "empanadas", cat: "picar", name: "Empanadas x3", price: 10500, desc: "Con ají de la casa.", recipe: [["empanadas", 3]], fav: true },
-  { key: "pandebonos", cat: "picar", name: "Pandebonos x3", price: 9000, recipe: [["pandebono", 3]] },
-  { key: "arepa", cat: "picar", name: "Arepa de chócolo con quesito", price: 14000, recipe: [["queso", 60]] },
-  { key: "nachos", cat: "picar", name: "Nachos con guacamole", price: 24000, recipe: [["queso", 80]] },
-  { key: "alitas", cat: "picar", name: "Alitas (8)", price: 28000, mods: ["salsa"], recipe: [["alitas", 350]] },
-  { key: "tabla", cat: "picar", name: "Tabla de quesos y carnes frías", price: 38000, desc: "Para compartir entre 3 o 4.", recipe: [["queso", 200]] },
-  { key: "patacones", cat: "picar", name: "Patacones con hogao", price: 16000 },
-  { key: "cubano", cat: "picar", name: "Sándwich cubano", price: 23000, recipe: [["pan", 1], ["queso", 50]] },
-  { key: "torta", cat: "postres", name: "Torta de chocolate", price: 11000, recipe: [["torta", 1]] },
-  { key: "cheesecake", cat: "postres", name: "Cheesecake de maracuyá", price: 13000, recipe: [["cheesecake", 1]] },
-  { key: "brownie", cat: "postres", name: "Brownie con helado", price: 14000, recipe: [["helado", 80]] },
 ];
 
 const FIRST = ["Laura", "Sebastián", "Valeria", "Santiago", "Mariana", "Felipe", "Daniela", "Andrés", "Juliana", "Camilo", "Paula", "Mateo", "Natalia", "Simón", "Sara", "Tomás", "Isabela", "Nicolás", "Manuela", "Esteban", "Luisa", "David", "Carolina", "Julián", "Ana María", "Alejandro", "Gabriela", "Miguel", "Catalina", "Samuel"];
@@ -192,18 +207,18 @@ const id = (kind: string, key: string) => stableId(`${kind}:${key}`);
 /** Catálogo, salón, equipo, insumos y clientes. No depende de la hora. */
 export async function seedBusiness(db: Db) {
   const biz = DEMO_BUSINESS_ID;
-  await db.query("insert into businesses (id, name, slug, settings) values ($1, $2, 'villa-verde', $3::jsonb) on conflict (id) do nothing", [
+  await db.query("insert into businesses (id, name, slug, settings) values ($1, $2, 'sr-patata', $3::jsonb) on conflict (id) do nothing", [
     biz,
-    DEFAULT_SETTINGS.business.name,
-    JSON.stringify(DEFAULT_SETTINGS),
+    DEMO_SETTINGS.business.name,
+    JSON.stringify(DEMO_SETTINGS),
   ]);
   await db.query("insert into pulse (business_id, version) values ($1, 1) on conflict do nothing", [biz]);
 
   await bulkInsert(
     db,
     "staff",
-    [["id", "uuid"], ["business_id", "uuid"], ["name", "text"], ["role", "text"], ["pin_hash", "text"], ["color", "text"]],
-    DEMO_STAFF.map((s) => ({ id: id("staff", s.key), business_id: biz, name: s.name, role: s.role, pin_hash: pinHash(id("staff", s.key), s.pin), color: s.color })),
+    [["id", "uuid"], ["business_id", "uuid"], ["name", "text"], ["role", "text"], ["pin_hash", "text"], ["color", "text"], ["pay_kind", "text"], ["pay_amount", "int"]],
+    DEMO_STAFF.map((s) => ({ id: id("staff", s.key), business_id: biz, name: s.name, role: s.role, pin_hash: pinHash(id("staff", s.key), s.pin), color: s.color, pay_kind: s.pay[0], pay_amount: s.pay[1] })),
   );
 
   await bulkInsert(
@@ -216,7 +231,7 @@ export async function seedBusiness(db: Db) {
     db,
     "floor_tables",
     [["id", "uuid"], ["business_id", "uuid"], ["zone_id", "uuid"], ["name", "text"], ["seats", "int"], ["x", "int"], ["y", "int"], ["shape", "text"], ["qr_token", "text"]],
-    TABLES.map((t) => ({ id: id("table", t.n), business_id: biz, zone_id: id("zone", t.zone), name: t.n, seats: t.seats, x: t.x, y: t.y, shape: t.shape, qr_token: `vv${t.n.toLowerCase()}${token(`table:${t.n}`, 6)}` })),
+    TABLES.map((t) => ({ id: id("table", t.n), business_id: biz, zone_id: id("zone", t.zone), name: t.n, seats: t.seats, x: t.x, y: t.y, shape: t.shape, qr_token: `sp${t.n.toLowerCase()}${token(`table:${t.n}`, 6)}` })),
   );
 
   await bulkInsert(
@@ -298,24 +313,23 @@ function pick<T>(r: () => number, list: readonly T[]) {
   return list[Math.floor(r() * list.length)]!;
 }
 
-/** Productos que se piden según la hora: café en la mañana, cerveza y cócteles en la noche. */
+/** Lo que se pide según la hora: combos y burgers al almuerzo, bandejas para compartir y cerveza en la noche. */
 function orderFor(r: () => number, hour: number): Line[] {
   const byKey = new Map(PRODUCTS.map((p) => [p.key, p]));
-  const morning = ["tinto", "capuchino", "latte", "americano", "mocaccino", "pandebonos", "empanadas", "arepa", "jugo", "v60", "cold-brew", "torta"];
-  const afternoon = ["capuchino", "latte", "limonada-coco", "affogato", "cheesecake", "brownie", "empanadas", "soda", "club", "cold-brew", "cubano"];
-  const night = ["club", "poker", "poker", "aguila", "corona", "mojito", "gin-tonic", "margarita", "espresso-martini", "nachos", "alitas", "tabla", "trago-aguardiente", "media-aguardiente", "cubetazo", "patacones", "carajillo", "canelazo", "trago-ron"];
-  const pool = hour < 12 ? morning : hour < 18 ? afternoon : night;
+  const lunch = ["combo-burger", "combo-burger", "combo-smash", "cheese-clasica", "smash-doble", "clasica-papas", "solomito-cheese", "express-cerdo", "express-nuggets", "antojo", "coca", "coca", "coca-zero", "limonada", "hatsu", "agua"];
+  const night = ["trilogia", "cuatro-carnes", "bandeja-crunchy", "bandeja-solomito", "compartir-nuggets", "combo-pareja", "smash-doble", "mega-smash", "umami", "mega-burger", "solomito-cheese", "express-costilla", "express-cerdo", "antojo", "coca", "coca", "club", "club", "poker", "corona", "limonada"];
+  const pool = hour < 17 ? lunch : night;
   const lines: Line[] = [];
-  const count = 1 + Math.floor(r() * (hour >= 18 ? 4 : 3));
+  const count = 1 + Math.floor(r() * (hour >= 17 ? 4 : 3));
   for (let i = 0; i < count; i++) {
     const prod = byKey.get(pick(r, pool))!;
     const mods: Line["mods"] = [];
-    if (prod.mods?.includes("leche") && r() < 0.25) mods.push(r() < 0.5 ? { name: "Almendras", price: 2500 } : { name: "Avena", price: 2500 });
-    if (prod.mods?.includes("tamano") && r() < 0.3) mods.push({ name: "Grande", price: 2000 });
-    if (prod.mods?.includes("preparacion") && r() < 0.35) mods.push({ name: "Michelada", price: 2500 });
-    if (prod.mods?.includes("sabor")) mods.push({ name: pick(r, ["Mora", "Lulo", "Maracuyá", "Mango"]), price: 0 });
-    if (prod.mods?.includes("salsa")) mods.push({ name: pick(r, ["BBQ", "Búfalo", "Miel mostaza"]), price: 0 });
-    const qty = prod.key.startsWith("media") || prod.key.startsWith("botella") || prod.key === "tabla" ? 1 : 1 + Math.floor(r() * (hour >= 18 ? 3 : 2));
+    if (prod.mods?.includes("salsa")) mods.push({ name: pick(r, ["De la casa", "Queso", "BBQ", "Ahumada", "Rosada"]), price: 0 });
+    if (prod.mods?.includes("barbacoa")) mods.push({ name: pick(r, ["Clásica", "Dulce picante"]), price: 0 });
+    if (prod.mods?.includes("bebida")) mods.push({ name: r() < 0.7 ? "Coca-Cola" : "Coca-Cola sin azúcar", price: 0 });
+    if (prod.mods?.includes("adiciones") && r() < 0.2) mods.push({ name: "Tocineta", price: 5000 });
+    if (prod.mods?.includes("preparacion") && r() < 0.3) mods.push({ name: "Michelada", price: 2500 });
+    const qty = prod.cat === "compartir" || prod.cat === "combos" ? 1 : 1 + Math.floor(r() * 2);
     const existing = lines.find((l) => l.prod.key === prod.key && JSON.stringify(l.mods) === JSON.stringify(mods));
     if (existing) existing.qty += qty;
     else lines.push({ prod, qty, mods });
@@ -348,9 +362,9 @@ export function fakeCufe(parts: (string | number)[]) {
 export async function seedActivity(db: Db, now = new Date()) {
   const biz = DEMO_BUSINESS_ID;
   const staff = (k: string) => id("staff", k);
-  const waiters = ["juanpablo", "camila"];
   const tables = TABLES.filter((t) => t.zone !== "barra");
   const ingByProduct = new Map(PRODUCTS.map((p) => [p.key, p.recipe ?? []]));
+  const stationOf = (p: P) => p.station ?? CATEGORIES.find((c) => c.key === p.cat)!.station;
 
   // Clientes del programa de sellos
   const customers = Array.from({ length: 34 }, (_, i) => {
@@ -393,25 +407,29 @@ export async function seedActivity(db: Db, now = new Date()) {
   const cutoff = new Date(Math.floor(now.getTime() / 3_600_000) * 3_600_000);
   const methods: [string, number][] = [["efectivo", 0.3], ["tarjeta", 0.24], ["nequi", 0.2], ["breb", 0.22], ["daviplata", 0.04]];
 
+  // Movimiento por día de la semana (lunes … domingo); los festivos se llenan como un sábado flojo
+  const BUSY = [0, 0.75, 0.75, 0.9, 1, 1.45, 1.65, 1.35];
   for (let d = 14; d >= 0; d--) {
-    const dayStartUtc = Date.parse(`${bogotaParts(new Date(now.getTime() - d * 86_400_000)).dayKey}T08:00:00-05:00`);
-    const dayKey = new Date(dayStartUtc - 5 * 3_600_000).toISOString().slice(0, 10);
+    const dayKey = bogotaParts(new Date(now.getTime() - d * 86_400_000)).dayKey;
     const r = rng(`day:${dayKey}`);
-    const dow = bogotaParts(new Date(dayStartUtc)).dow;
-    const busy = dow >= 4 && dow <= 6 ? 1.6 : dow === 7 ? 1.1 : 1;
-    const count = Math.round((24 + r() * 10) * busy);
+    const dow = weekdayOf(dayKey);
+    const busy = BUSY[dow]! * (holidayName(dayKey) ? 1.3 : 1);
+    const count = Math.round((20 + r() * 8) * busy);
     for (let n = 0; n < count; n++) {
-      // Horas del día: picos a media mañana, tarde y noche
+      // Abre de 12:00 m. a 10:00 p. m.: pico al almuerzo y en la noche
       const slot = r();
-      const hour = slot < 0.3 ? 8 + Math.floor(r() * 4) : slot < 0.55 ? 12 + Math.floor(r() * 6) : 18 + Math.floor(r() * 6);
-      const opened = new Date(dayStartUtc + (hour - 8) * 3_600_000 + Math.floor(r() * 50) * 60_000);
-      const minutes = 25 + Math.floor(r() * (hour >= 18 ? 90 : 45));
+      const hour = slot < 0.42 ? 12 + Math.floor(r() * 4) : slot < 0.52 ? 16 : 17 + Math.floor(r() * 5);
+      const opened = new Date(Date.parse(`${dayKey}T${String(hour).padStart(2, "0")}:00:00-05:00`) + Math.floor(r() * 50) * 60_000);
+      const minutes = 20 + Math.floor(r() * (hour >= 17 ? 70 : 40));
       const closed = new Date(opened.getTime() + minutes * 60_000);
       if (closed > cutoff) continue;
       const checkId = stableId(`hist:${dayKey}:${n}`);
-      const waiter = pick(r, waiters);
+      // Quién atiende según el horario: Camila y Valentina al almuerzo; Juan Pablo en la noche (Camila los martes)
+      const lunch = hour < 17;
+      const waiter = lunch ? (dow === 7 || dow === 2 ? "valentina" : dow === 1 || r() < 0.7 ? "camila" : "valentina") : dow === 2 ? "camila" : "juanpablo";
+      const cashier = lunch && dow !== 1 ? "valentina" : waiter;
       const table = pick(r, tables);
-      const kind = r() < 0.12 ? "llevar" : "mesa";
+      const kind = r() < 0.2 ? "llevar" : "mesa";
       const lines = orderFor(r, hour);
       const customer = r() < 0.3 ? customers[Math.floor(r() * customers.length)]! : null;
       lines.forEach((l, i) => {
@@ -426,7 +444,7 @@ export async function seedActivity(db: Db, now = new Date()) {
           qty: l.qty,
           modifiers: l.mods,
           note: "",
-          station: l.prod.cat === "picar" || l.prod.cat === "postres" ? "cocina" : "barra",
+          station: stationOf(l.prod),
           tax_rate: 8,
           status: "delivered",
           round: 1,
@@ -448,7 +466,7 @@ export async function seedActivity(db: Db, now = new Date()) {
       // Una anulación de vez en cuando, para que el reporte tenga qué mostrar
       if (r() < 0.05) {
         const prod = pick(r, PRODUCTS);
-        const reason = pick(r, ["El cliente cambió de opinión", "Se marcó dos veces", "Demoró mucho"]);
+        const reason = pick(r, ["El cliente cambió de opinión", "Se marcó dos veces", "Demoró mucho", "Salió sin la salsa pedida"]);
         items.push({
           id: stableId(`hist:${dayKey}:${n}:void`),
           business_id: biz,
@@ -459,7 +477,7 @@ export async function seedActivity(db: Db, now = new Date()) {
           qty: 1,
           modifiers: [],
           note: "",
-          station: prod.cat === "picar" || prod.cat === "postres" ? "cocina" : "barra",
+          station: stationOf(prod),
           tax_rate: 8,
           status: "void",
           round: 1,
@@ -469,10 +487,10 @@ export async function seedActivity(db: Db, now = new Date()) {
           ready_at: null,
           delivered_at: null,
           void_reason: reason,
-          void_by: staff("valentina"),
+          void_by: staff(cashier),
           created_at: opened.toISOString(),
         });
-        audit.push({ id: stableId(`hist:${dayKey}:${n}:audit`), business_id: biz, staff_id: staff("valentina"), action: "void", detail: { item: prod.name, check: number, reason }, amount: prod.price, created_at: opened.toISOString() });
+        audit.push({ id: stableId(`hist:${dayKey}:${n}:audit`), business_id: biz, staff_id: staff(cashier), action: "void", detail: { item: prod.name, check: number, reason }, amount: prod.price, created_at: opened.toISOString() });
       }
       const totals = checkTotals(lines.map((l) => ({ unitPrice: l.prod.price, qty: l.qty, modifiers: l.mods, taxRate: 8 })));
       const tipYes = r() < 0.62;
@@ -498,7 +516,7 @@ export async function seedActivity(db: Db, now = new Date()) {
         status: "paid",
         opened_by: staff(waiter),
         opened_at: opened.toISOString(),
-        closed_by: staff("valentina"),
+        closed_by: staff(cashier),
         closed_at: closed.toISOString(),
         customer_id: customer?.id ?? null,
         discount_pct: 0,
@@ -516,7 +534,7 @@ export async function seedActivity(db: Db, now = new Date()) {
         reference: method === "efectivo" ? "" : String(100000 + Math.floor(r() * 899999)),
         part: "",
         status: "ok",
-        created_by: staff("valentina"),
+        created_by: staff(cashier),
         cash_session_id: null,
         created_at: closed.toISOString(),
       });
@@ -526,8 +544,8 @@ export async function seedActivity(db: Db, now = new Date()) {
         business_id: biz,
         check_id: checkId,
         number: num,
-        prefix: DEFAULT_SETTINGS.invoice.prefix,
-        cufe: fakeCufe([DEFAULT_SETTINGS.invoice.prefix, num, closed.toISOString(), totals.total, totals.tax]),
+        prefix: DEMO_SETTINGS.invoice.prefix,
+        cufe: fakeCufe([DEMO_SETTINGS.invoice.prefix, num, closed.toISOString(), totals.total, totals.tax]),
         public_token: token(`inv:${checkId}`, 16),
         kind: "consumidor",
         subtotal: totals.base,
@@ -561,12 +579,12 @@ export async function seedActivity(db: Db, now = new Date()) {
   // Compras, mermas y conteos de los últimos días, como los registraría el equipo
   const at = (daysAgo: number, hhmm: string) => new Date(Date.parse(`${bogotaParts(new Date(now.getTime() - daysAgo * 86_400_000)).dayKey}T${hhmm}:00-05:00`));
   const manual: [number, string, string, number, string, string, string][] = [
-    [1, "09:10", "limon", 50, "compra", "Plaza de mercado", "valentina"],
-    [1, "10:15", "poker", 72, "compra", "Distribuidora del Eje · factura 4471", "andres"],
-    [1, "21:40", "club", -1, "merma", "Se cayó en la terraza", "mateo"],
-    [2, "11:05", "cafe", 2000, "compra", "Tostadora de Santuario", "andres"],
-    [3, "18:20", "leche", -1000, "merma", "Se cortó", "valentina"],
-    [4, "09:30", "ginebra", -40, "conteo", "Conteo de la semana", "andres"],
+    [1, "10:40", "papa", 10000, "compra", "Distribuidora de papa del Eje · factura 2207", "andres"],
+    [1, "11:15", "coca", 48, "compra", "Proveedor de gaseosas · factura 8812", "valentina"],
+    [1, "21:40", "club", -1, "merma", "Se cayó en la terraza", "luisa"],
+    [2, "10:50", "carne", 40, "compra", "Carnes del Eje", "andres"],
+    [3, "18:20", "salsa-queso", -500, "merma", "Se cortó", "mateo"],
+    [4, "10:35", "tocineta", -200, "conteo", "Conteo de la semana", "andres"],
   ];
   await bulkInsert(
     db,
@@ -577,11 +595,11 @@ export async function seedActivity(db: Db, now = new Date()) {
       .map(([d, hhmm, ing, delta, reason, ref, who]) => ({ id: stableId(`manual:${d}:${ing}`), business_id: biz, ingredient_id: id("ing", ing), delta, reason, ref, staff_id: staff(who), created_at: at(d, hhmm).toISOString() })),
   );
 
-  // Caja de hoy abierta desde las 8:00 con base de $200.000
+  // Caja de hoy abierta desde las 11:30 con base de $200.000
   const sessionId = stableId(`cash:${today.dayKey}`);
-  const openedCash = new Date(Math.min(now.getTime() - 30 * 60_000, Date.parse(`${today.dayKey}T08:00:00-05:00`)));
+  const openedCash = new Date(Math.min(now.getTime() - 30 * 60_000, Date.parse(`${today.dayKey}T11:30:00-05:00`)));
   await db.query("insert into cash_sessions (id, business_id, opened_by, opened_at, opening) values ($1, $2, $3, $4, 200000)", [sessionId, biz, staff("valentina"), openedCash.toISOString()]);
-  await db.query("insert into cash_movements (id, business_id, session_id, kind, amount, reason, staff_id, created_at) values ($1, $2, $3, 'out', 18000, 'Bolsa de hielo', $4, $5)", [
+  await db.query("insert into cash_movements (id, business_id, session_id, kind, amount, reason, staff_id, created_at) values ($1, $2, $3, 'out', 18000, 'Hielo y limones', $4, $5)", [
     stableId(`cashmove:${today.dayKey}`),
     biz,
     sessionId,
@@ -590,9 +608,54 @@ export async function seedActivity(db: Db, now = new Date()) {
   ]);
   await db.query("update payments set cash_session_id = $1 where business_id = $2 and created_at >= $3", [sessionId, biz, openedCash.toISOString()]);
 
+  await bulkInsert(
+    db,
+    "shifts",
+    [["id", "uuid"], ["business_id", "uuid"], ["staff_id", "uuid"], ["clock_in", "timestamptz"], ["clock_out", "timestamptz"], ["pay_kind", "text"], ["pay_amount", "int"]],
+    seedShifts(now),
+  );
+
   await seedLiveService(db, now, number);
   await db.query("select setval('check_number_seq', (select coalesce(max(number), 100) from checks))");
   await db.query("select setval('invoice_number_seq', (select coalesce(max(number), 1000) from invoices))");
+}
+
+/**
+ * Entradas y salidas de las dos últimas semanas según el horario, con llegadas tarde de vez en cuando,
+ * y las de hoy hasta el comienzo de esta hora (quien no ha salido sigue en turno).
+ * El viernes más reciente Luisa faltó y Mateo cubrió la noche: 12 horas en un día.
+ */
+function seedShifts(now: Date) {
+  const cutoff = Math.floor(now.getTime() / 3_600_000) * 3_600_000;
+  const today = bogotaParts(now).dayKey;
+  let friday = addDays(today, -1);
+  while (weekdayOf(friday) !== 5) friday = addDays(friday, -1);
+  const rows: Record<string, unknown>[] = [];
+  for (let d = 14; d >= 0; d--) {
+    const day = addDays(today, -d);
+    const dow = weekdayOf(day);
+    for (const s of DEMO_STAFF) {
+      for (const block of SCHEDULE[s.key] ?? []) {
+        if (!block.days.includes(dow) || (day === friday && s.key === "luisa")) continue;
+        const to = day === friday && s.key === "mateo" ? "22:30" : block.to;
+        const r = rng(`shift:${day}:${s.key}:${block.from}`);
+        const late = r() < 0.15;
+        const start = Date.parse(`${day}T${block.from}:00-05:00`) + (late ? 1 + Math.floor(r() * 14) : -Math.floor(r() * 9)) * 60_000;
+        const end = Date.parse(`${day}T${to}:00-05:00`) + Math.floor(r() * 26) * 60_000;
+        if (start >= cutoff) continue;
+        rows.push({
+          id: stableId(`shift:${day}:${s.key}:${block.from}`),
+          business_id: DEMO_BUSINESS_ID,
+          staff_id: id("staff", s.key),
+          clock_in: new Date(start).toISOString(),
+          clock_out: end <= cutoff ? new Date(end).toISOString() : null,
+          pay_kind: s.pay[0],
+          pay_amount: s.pay[1],
+        });
+      }
+    }
+  }
+  return rows;
 }
 
 /** Lo que está pasando ahora: mesas abiertas, tiquetes en barra y cocina y pedidos por QR. */
@@ -613,9 +676,9 @@ async function seedLiveService(db: Db, now: Date, firstNumber: number) {
       opened: 46,
       by: "juanpablo",
       items: [
-        { key: "capuchino", qty: 2, status: "delivered", sent: 44, ready: 38, mods: [{ name: "Entera", price: 0 }] },
-        { key: "mocaccino", qty: 1, status: "delivered", sent: 44, ready: 37, mods: [{ name: "Avena", price: 2500 }] },
-        { key: "pandebonos", qty: 2, status: "delivered", sent: 44, ready: 35 },
+        { key: "combo-burger", qty: 2, status: "delivered", sent: 44, ready: 33, mods: [{ name: "Coca-Cola", price: 0 }] },
+        { key: "solomito-cheese", qty: 1, status: "delivered", sent: 44, ready: 31 },
+        { key: "coca-zero", qty: 1, status: "delivered", sent: 44, ready: 42 },
       ],
     },
     {
@@ -627,7 +690,7 @@ async function seedLiveService(db: Db, now: Date, firstNumber: number) {
       by: "camila",
       items: [
         { key: "club", qty: 2, status: "ready", sent: 18.3, ready: 2, mods: [{ name: "Michelada", price: 2500 }] },
-        { key: "nachos", qty: 1, status: "sent", sent: 18.3, note: "Sin jalapeño" },
+        { key: "antojo", qty: 1, status: "sent", sent: 18.3, mods: [{ name: "Ahumada", price: 0 }], note: "Bien crocantes" },
       ],
     },
     {
@@ -639,10 +702,10 @@ async function seedLiveService(db: Db, now: Date, firstNumber: number) {
       by: "juanpablo",
       status: "bill",
       items: [
-        { key: "botella-aguardiente", qty: 1, status: "delivered", sent: 70, ready: 66 },
-        { key: "poker", qty: 6, status: "delivered", sent: 70, ready: 66 },
-        { key: "tabla", qty: 1, status: "delivered", sent: 62, ready: 49 },
-        { key: "empanadas", qty: 2, status: "delivered", sent: 40, ready: 31 },
+        { key: "trilogia", qty: 1, status: "delivered", sent: 70, ready: 52 },
+        { key: "cuatro-carnes", qty: 1, status: "delivered", sent: 70, ready: 50 },
+        { key: "poker", qty: 6, status: "delivered", sent: 70, ready: 67 },
+        { key: "coca", qty: 2, status: "delivered", sent: 40, ready: 38 },
       ],
     },
     {
@@ -652,7 +715,7 @@ async function seedLiveService(db: Db, now: Date, firstNumber: number) {
       guests: 3,
       opened: 9,
       by: "camila",
-      items: [{ key: "mojito", qty: 3, status: "sent", sent: 6.25 }],
+      items: [{ key: "smash-doble", qty: 3, status: "sent", sent: 6.25 }],
     },
     {
       key: "mesa1",
@@ -662,9 +725,9 @@ async function seedLiveService(db: Db, now: Date, firstNumber: number) {
       opened: 14,
       by: "camila",
       items: [
-        { key: "latte", qty: 1, status: "delivered", sent: 11.6, ready: 7, mods: [{ name: "Avena", price: 2500 }] },
-        { key: "aromatica", qty: 1, status: "delivered", sent: 11.6, ready: 7 },
-        { key: "arepa", qty: 1, status: "sent", sent: 11.6 },
+        { key: "clasica-papas", qty: 1, status: "delivered", sent: 11.6, ready: 3, mods: [{ name: "Queso", price: 0 }] },
+        { key: "limonada", qty: 1, status: "delivered", sent: 11.6, ready: 8 },
+        { key: "express-nuggets", qty: 1, status: "sent", sent: 11.6 },
       ],
     },
     {
@@ -675,8 +738,8 @@ async function seedLiveService(db: Db, now: Date, firstNumber: number) {
       opened: 58,
       by: "juanpablo",
       items: [
-        { key: "cubetazo", qty: 1, status: "delivered", sent: 55, ready: 52 },
-        { key: "patacones", qty: 2, status: "delivered", sent: 50, ready: 38 },
+        { key: "bandeja-crunchy", qty: 1, status: "delivered", sent: 55, ready: 40, mods: [{ name: "Dulce picante", price: 0 }] },
+        { key: "club", qty: 4, status: "delivered", sent: 55, ready: 52 },
       ],
     },
     {
@@ -687,9 +750,9 @@ async function seedLiveService(db: Db, now: Date, firstNumber: number) {
       opened: 27,
       by: "camila",
       items: [
-        { key: "club", qty: 4, status: "delivered", sent: 24, ready: 21 },
-        { key: "margarita", qty: 2, status: "ready", sent: 12.9, ready: 1 },
-        { key: "alitas", qty: 1, status: "sent", sent: 12.9, mods: [{ name: "BBQ", price: 0 }] },
+        { key: "combo-pareja", qty: 1, status: "delivered", sent: 24, ready: 10 },
+        { key: "umami", qty: 2, status: "ready", sent: 12.9, ready: 1 },
+        { key: "express-costilla", qty: 1, status: "sent", sent: 12.9 },
       ],
     },
     {
@@ -700,8 +763,8 @@ async function seedLiveService(db: Db, now: Date, firstNumber: number) {
       opened: 33,
       by: "mateo",
       items: [
-        { key: "gin-tonic", qty: 1, status: "delivered", sent: 31, ready: 27 },
-        { key: "espresso-martini", qty: 1, status: "sent", sent: 3.7 },
+        { key: "corona", qty: 1, status: "delivered", sent: 31, ready: 30 },
+        { key: "antojo", qty: 1, status: "sent", sent: 3.7, mods: [{ name: "Queso", price: 0 }] },
       ],
     },
     {
@@ -711,7 +774,7 @@ async function seedLiveService(db: Db, now: Date, firstNumber: number) {
       guests: 1,
       opened: 3,
       by: "valentina",
-      items: [{ key: "americano", qty: 2, status: "sent", sent: 2.1, mods: [{ name: "Grande", price: 2000 }] }],
+      items: [{ key: "combo-smash", qty: 2, status: "sent", sent: 2.1, mods: [{ name: "Coca-Cola", price: 0 }] }],
     },
   ];
 
@@ -751,7 +814,7 @@ async function seedLiveService(db: Db, now: Date, firstNumber: number) {
         qty: it.qty,
         modifiers: it.mods ?? [],
         note: it.note ?? "",
-        station: prod.cat === "picar" || prod.cat === "postres" ? "cocina" : "barra",
+        station: prod.station ?? CATEGORIES.find((c) => c.key === prod.cat)!.station,
         tax_rate: 8,
         status: it.status,
         round: sends.indexOf(it.sent ?? 0) + 1,
@@ -780,8 +843,8 @@ async function seedLiveService(db: Db, now: Date, firstNumber: number) {
       id("table", "7"),
       JSON.stringify({
         items: [
-          { productId: id("prod", "limonada-coco"), name: "Limonada de coco", qty: 2, modifiers: [], note: "" },
-          { productId: id("prod", "empanadas"), name: "Empanadas x3", qty: 1, modifiers: [], note: "Con ají aparte" },
+          { productId: id("prod", "solomito-cheese"), name: "Solomito Cheese", qty: 1, modifiers: [], note: "La cebolla aparte" },
+          { productId: id("prod", "coca"), name: "Coca-Cola lata", qty: 2, modifiers: [], note: "" },
         ],
         guestName: "Mesa de Paula",
       }),

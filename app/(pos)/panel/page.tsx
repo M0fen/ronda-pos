@@ -1,13 +1,14 @@
-import { AlertTriangle, MessageCircle, PackageOpen } from "lucide-react";
+import { AlertTriangle, ChevronRight, MessageCircle, PackageOpen, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { BarList, ColumnChart } from "@/components/charts";
 import { btn, Empty, Pill } from "@/components/ui";
 import { addDays, bogotaParts, jornadaKey, weekdayOf } from "@/lib/core/time";
 import { fmtDay, fmtShort, fmtTime } from "@/lib/format";
-import { requireStaff } from "@/lib/server/auth";
+import { can, requireStaff } from "@/lib/server/auth";
 import { getBusiness } from "@/lib/server/business";
 import { formatStock, ingredientsView } from "@/lib/server/inventory";
+import { laborToday } from "@/lib/server/labor";
 import { dailySales, dayReport, salesOn } from "@/lib/server/reports";
 import { cop } from "@/lib/money";
 import { METHOD_LABEL } from "@/lib/settings";
@@ -26,13 +27,15 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
   const day = dia && /^\d{4}-\d{2}-\d{2}$/.test(dia) && dia <= today && dia >= addDays(today, -90) ? dia : today;
   const isToday = day === today;
   const weekday = WEEKDAY[weekdayOf(day)] ?? "";
-  const [report, daily, lastWeek, ingredients, biz] = await Promise.all([
+  const showLabor = isToday && can.manage(staff);
+  const [report, daily, lastWeek, ingredients, biz, labor] = await Promise.all([
     dayReport(staff.business_id, day),
     dailySales(staff.business_id, 14),
     // Hoy se compara con el mismo día de la semana pasada a esta misma hora; un día cerrado, completo
     salesOn(staff.business_id, addDays(day, -7), isToday ? new Date(Date.now() - 7 * 86_400_000) : undefined),
     ingredientsView(staff.business_id),
     getBusiness(staff.business_id),
+    showLabor ? laborToday(staff.business_id) : null,
   ]);
   const low = ingredients.filter((i) => i.low || (i.daysLeft !== null && i.daysLeft <= 3));
   const delta = lastWeek ? Math.round(((report.sales - lastWeek) / lastWeek) * 100) : null;
@@ -109,6 +112,24 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
           sub={isToday ? (report.openNow.n ? `${report.openNow.n} cuentas abiertas · ${cop(report.openNow.amount)}` : "Sin cuentas abiertas") : report.sales ? `${Math.round((report.tips / report.sales) * 1000) / 10} % sobre las ventas`.replace(".", ",") : "Sin ventas"}
         />
       </section>
+
+      {labor ? (
+        <Link href="/panel/rentabilidad?rango=hoy" className={`flex flex-wrap items-center gap-x-4 gap-y-1 rounded-3xl px-5 py-4 ring-1 ${labor.pct !== null && labor.pct * 100 > labor.alertPct ? "bg-cereza-soft ring-cereza/30" : "bg-papel ring-linea"}`}>
+          <Users size={22} className="shrink-0" />
+          <span className="flex-1">
+            <span className="block font-bold">
+              {labor.pct === null ? "Equipo de hoy" : `El equipo va en el ${Math.round(labor.pct * 100)} % de las ventas netas de hoy`}
+            </span>
+            <span className="text-tinto-2">
+              {labor.onShift} en turno ahora · costo de hoy {cop(labor.labor)}
+              {labor.pct !== null && labor.pct * 100 > labor.alertPct ? ` · pasa del ${labor.alertPct} %` : ""}
+            </span>
+          </span>
+          <span className="inline-flex items-center gap-1 font-semibold">
+            Ver rentabilidad <ChevronRight size={18} />
+          </span>
+        </Link>
+      ) : null}
 
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-3xl bg-papel p-5 ring-1 ring-linea">

@@ -309,4 +309,26 @@ create table pulse (
 );
 `,
   },
+  {
+    // Costo del equipo: pago de cada persona y turnos con entrada y salida marcadas con el PIN
+    version: 2,
+    sql: `
+alter table staff add column pay_kind text not null default 'salario' check (pay_kind in ('salario','hora'));
+alter table staff add column pay_amount int not null default 0 check (pay_amount >= 0);
+
+create table shifts (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references businesses(id) on delete cascade,
+  staff_id uuid not null references staff(id) on delete cascade,
+  clock_in timestamptz not null,
+  clock_out timestamptz,
+  pay_kind text not null default 'salario',
+  pay_amount int not null default 0,
+  closed_by uuid references staff(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create index shifts_business on shifts (business_id, clock_in);
+create unique index shifts_one_open on shifts (staff_id) where clock_out is null;
+`,
+  },
 ];

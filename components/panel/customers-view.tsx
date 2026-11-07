@@ -42,7 +42,7 @@ export function CustomersView({ customers, loyalty, business }: { customers: Cus
   );
   const message =
     seg === "inactivos"
-      ? `¡Hola! Te extrañamos en ${business}. Esta semana tu próximo café va por cuenta de la casa. Muestra este mensaje en caja.`
+      ? `¡Hola! Te extrañamos en ${business}. Esta semana tu próxima bebida va por cuenta de la casa. Muestra este mensaje en caja.`
       : seg === "cumple"
         ? `¡Feliz cumpleaños de parte de ${business}! Ven esta semana y te invitamos ${loyalty.reward.toLowerCase()}.`
         : seg === "cerca"
