@@ -5,6 +5,12 @@
  * amarillo fachada) con tinto como color de texto. Archivo con eje de ancho para la tipografía;
  * mono solo en tiquetes y recibos, como sale de la impresora térmica.
  */
+/* Colores de marca: los de Ronda por defecto; el layout raíz pone los del local cuando usa su propia marca */
+:root {
+  --brand-primary: #1e4fb8;
+  --brand-accent: #f4b400;
+}
+
 @theme inline {
   --color-cal: #f4f5f1;
   --color-papel: #ffffff;
@@ -13,16 +19,16 @@
   --color-humo: #6b6660;
   --color-linea: #dfded7;
   --color-linea-2: #c9c7bf;
-  --color-balcon: #1e4fb8;
-  --color-balcon-2: #173f96;
-  --color-balcon-soft: #e3eaf8;
+  --color-balcon: var(--brand-primary);
+  --color-balcon-2: color-mix(in oklab, var(--brand-primary) 80%, black);
+  --color-balcon-soft: color-mix(in oklab, var(--brand-primary) 12%, white);
   --color-puerta: #0b7a55;
   --color-puerta-2: #086045;
   --color-puerta-soft: #dff1e9;
   --color-cereza: #d2232a;
   --color-cereza-soft: #fbe3e3;
-  --color-fachada: #f4b400;
-  --color-fachada-soft: #fdf1cc;
+  --color-fachada: var(--brand-accent);
+  --color-fachada-soft: color-mix(in oklab, var(--brand-accent) 22%, white);
   --color-noche: #1a100c;
   --color-noche-2: #2a1b15;
   --color-noche-3: #3a2820;

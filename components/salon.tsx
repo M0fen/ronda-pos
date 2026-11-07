@@ -12,7 +12,14 @@ import { cn } from "@/lib/utils";
 import { Sheet } from "./sheet";
 import { report, toast } from "./toast";
 
-type Floor = { zones: { id: string; name: string }[]; tables: TableView[]; others: CheckSummary[]; checks: CheckSummary[]; requests: RequestView[] };
+type Floor = {
+  zones: { id: string; name: string }[];
+  tables: TableView[];
+  others: CheckSummary[];
+  checks: CheckSummary[];
+  requests: RequestView[];
+  deliveries: number;
+};
 
 const IDLE_MINUTES = 25;
 
@@ -26,6 +33,8 @@ export function Salon({ floor }: { floor: Floor }) {
   const [pending, start] = useTransition();
   const tables = floor.tables.filter((t) => t.zone_id === zone);
   const busy = floor.tables.filter((t) => t.check).length;
+  // Local de mostrador (como un punto en centro comercial): solo sillas de barra, sin mesas. Primero van los pedidos.
+  const counter = floor.tables.every((t) => t.seats <= 1);
 
   function open(input: Parameters<typeof openCheckAction>[0]) {
     start(async () => {
@@ -58,57 +67,77 @@ export function Salon({ floor }: { floor: Floor }) {
           })}
         </div>
         <p className="mr-auto text-sm text-humo">
-          {busy} de {floor.tables.length} mesas ocupadas
+          {counter ? `${floor.others.length} ${floor.others.length === 1 ? "pedido abierto" : "pedidos abiertos"}` : `${busy} de ${floor.tables.length} mesas ocupadas`}
         </p>
-        <button className={btn("soft", "md")} onClick={() => (setNewTab("barra"), setTabName(""))}>
-          <Wine size={18} /> Cuenta de barra
-        </button>
-        <button className={btn("soft", "md")} onClick={() => (setNewTab("llevar"), setTabName(""))}>
-          <ShoppingBag size={18} /> Para llevar
-        </button>
-      </div>
-
-      {/* Plano en tablet y computador; lista en el teléfono */}
-      <div className="relative mt-4 hidden aspect-[16/7.2] rounded-3xl border border-linea bg-papel/60 sm:block">
-        {tables.map((t) => (
-          <div key={t.id} className="absolute" style={{ left: `${t.x}%`, top: `${t.y}%`, width: t.shape === "long" ? "17%" : "16%", height: "34%" }}>
-            <TableTile table={t} onOpen={() => (setOpening(t), setGuests(Math.min(t.seats, 2)))} />
-          </div>
-        ))}
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-2.5 sm:hidden">
-        {tables.map((t) => (
-          <div key={t.id} className="h-32">
-            <TableTile table={t} onOpen={() => (setOpening(t), setGuests(Math.min(t.seats, 2)))} />
-          </div>
-        ))}
-      </div>
-
-      <section className="mt-6">
-        <h2 className="text-lg font-bold">Barra y para llevar</h2>
-        {floor.others.length ? (
-          <ul className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {floor.others.map((c) => (
-              <li key={c.id}>
-                <Link href={`/cuenta/${c.id}`} className="flex items-center gap-3 rounded-2xl bg-papel px-4 py-3 ring-1 ring-linea hover:ring-tinto">
-                  {c.kind === "barra" ? <Wine size={20} className="text-balcon" /> : <ShoppingBag size={20} className="text-puerta" />}
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-semibold">{c.label}</span>
-                    <span className="block text-sm text-humo">
-                      {c.minutesOpen} min · {c.units} productos
-                    </span>
-                  </span>
-                  {c.ready ? <Pill tone="green">Listo</Pill> : null}
-                  <Money value={c.total} className="font-semibold" />
-                  <ChevronRight size={18} className="text-humo" />
-                </Link>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-1 text-sm text-humo">No hay cuentas de barra ni pedidos para llevar abiertos.</p>
+        {counter ? null : (
+          <button className={btn("soft", "md")} onClick={() => (setNewTab("barra"), setTabName(""))}>
+            <Wine size={18} /> Cuenta de barra
+          </button>
         )}
-      </section>
+        <button className={btn(counter ? "primary" : "soft", "md")} onClick={() => (setNewTab("llevar"), setTabName(""))}>
+          <ShoppingBag size={18} /> {counter ? "Nuevo pedido" : "Para llevar"}
+        </button>
+      </div>
+
+      <div className="flex flex-col">
+        {/* Plano en tablet y computador; lista en el teléfono */}
+        <div className={cn("relative mt-4 hidden rounded-3xl border border-linea bg-papel/60 sm:block", counter ? "order-2 aspect-[16/4]" : "aspect-[16/7.2]")}>
+          {tables.map((t) => (
+            <div
+              key={t.id}
+              className="absolute"
+              style={{
+                left: `${t.x}%`,
+                top: `${t.y}%`,
+                width: t.shape === "long" ? "17%" : "16%",
+                height: "34%",
+              }}
+            >
+              <TableTile table={t} onOpen={() => (setOpening(t), setGuests(Math.min(t.seats, 2)))} />
+            </div>
+          ))}
+        </div>
+        <div className={cn("mt-4 grid grid-cols-2 gap-2.5 sm:hidden", counter && "order-3")}>
+          {tables.map((t) => (
+            <div key={t.id} className="h-32">
+              <TableTile table={t} onOpen={() => (setOpening(t), setGuests(Math.min(t.seats, 2)))} />
+            </div>
+          ))}
+        </div>
+
+        <section className={counter ? "order-1 mt-4" : "mt-6"}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-bold">{counter ? "Pedidos del mostrador" : "Barra y para llevar"}</h2>
+            {floor.deliveries ? (
+              <Link href="/domicilios" className="text-[15px] font-semibold text-balcon underline-offset-4 hover:underline">
+                {floor.deliveries} {floor.deliveries === 1 ? "domicilio en curso" : "domicilios en curso"} →
+              </Link>
+            ) : null}
+          </div>
+          {floor.others.length ? (
+            <ul className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {floor.others.map((c) => (
+                <li key={c.id}>
+                  <Link href={`/cuenta/${c.id}`} className="flex items-center gap-3 rounded-2xl bg-papel px-4 py-3 ring-1 ring-linea hover:ring-tinto">
+                    {c.kind === "barra" ? <Wine size={20} className="text-balcon" /> : <ShoppingBag size={20} className="text-puerta" />}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold">{c.label}</span>
+                      <span className="block text-sm text-humo">
+                        {c.minutesOpen} min · {c.units} productos
+                      </span>
+                    </span>
+                    {c.ready ? <Pill tone="green">Listo</Pill> : null}
+                    <Money value={c.total} className="font-semibold" />
+                    <ChevronRight size={18} className="text-humo" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-sm text-humo">{counter ? "No hay pedidos abiertos. Toca Nuevo pedido para empezar." : "No hay cuentas de barra ni pedidos para llevar abiertos."}</p>
+          )}
+        </section>
+      </div>
 
       <Sheet
         open={!!opening}
@@ -135,7 +164,7 @@ export function Salon({ floor }: { floor: Floor }) {
       <Sheet
         open={!!newTab}
         onClose={() => setNewTab(null)}
-        title={newTab === "barra" ? "Nueva cuenta de barra" : "Nuevo pedido para llevar"}
+        title={newTab === "barra" ? "Nueva cuenta de barra" : counter ? "Nuevo pedido" : "Nuevo pedido para llevar"}
         footer={
           <button className={btn("primary", "lg", "w-full")} disabled={pending || tabName.trim().length < 2} onClick={() => newTab && open({ kind: newTab, name: tabName, guests: 1 })}>
             Abrir cuenta
@@ -245,7 +274,8 @@ function Requests({ requests, checks }: { requests: RequestView[]; checks: Check
                 {r.kind === "order" ? (
                   <>
                     <p className="font-semibold">
-                      {where} pidió por QR{r.payload.guestName ? ` · ${r.payload.guestName}` : ""}
+                      {where} pidió por QR
+                      {r.payload.guestName ? ` · ${r.payload.guestName}` : ""}
                     </p>
                     <p className="truncate text-sm text-cal/75">{(r.payload.items ?? []).map((i) => `${i.qty} ${i.name}${i.note ? ` (${i.note})` : ""}`).join(", ")}</p>
                   </>
@@ -279,7 +309,10 @@ function Requests({ requests, checks }: { requests: RequestView[]; checks: Check
                 <button
                   className={btn("warn", "sm")}
                   onClick={() => {
-                    if (!check) return toast("Esa mesa no tiene una cuenta abierta", { tone: "error" });
+                    if (!check)
+                      return toast("Esa mesa no tiene una cuenta abierta", {
+                        tone: "error",
+                      });
                     if (r.kind === "bill") start(async () => void (await approveRequestAction(r.id)));
                     router.push(`/cuenta/${check.id}/cobro`);
                   }}

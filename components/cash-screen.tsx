@@ -115,7 +115,7 @@ export function CashScreen({
                 <span className="text-right">
                   <Money value={m.amount + m.tip} className="font-semibold" />
                   <span className="block text-[13px] text-humo">
-                    {m.n} {m.n === 1 ? "pago" : "pagos"}{m.tip ? ` · propina ${cop(m.tip)}` : ""}
+                    {m.n} {m.n === 1 ? "pago" : "pagos"}{m.tip ? ` · propina ${cop(m.tip)}` : ""}{m.method === "plataforma" ? " · no entra al cajón" : ""}
                   </span>
                 </span>
               </li>

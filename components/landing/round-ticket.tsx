@@ -14,7 +14,7 @@ const ITEMS = [
 ];
 
 /** La ronda que se arma en la portada: tocar productos imprime la comanda y se cobra con Bre-B. */
-export function RoundTicket() {
+export function RoundTicket({ business }: { business: string }) {
   const [lines, setLines] = useState<Record<string, number>>({ smash: 2 });
   const [paid, setPaid] = useState(false);
   const [sent, setSent] = useState(false);
@@ -43,7 +43,7 @@ export function RoundTicket() {
 
       <div className="relative mt-4 rotate-[-1.2deg]">
         <article key={list.map((i) => `${i.id}${lines[i.id]}`).join()} className="ticket-edge print-in relative mx-auto w-full max-w-[360px] bg-white px-6 pt-6 font-mono text-[13px] text-black shadow-[0_18px_40px_-12px_rgba(36,21,15,0.35)]">
-          <p className="text-center font-sans text-lg font-extrabold [font-stretch:110%]">Sr. Patata</p>
+          <p className="text-center font-sans text-lg font-extrabold [font-stretch:110%]">{business}</p>
           <p className="text-center">Mesa 7 · Ronda 1</p>
           <div className="my-3 border-t border-dashed border-black/40" />
           {list.length ? (

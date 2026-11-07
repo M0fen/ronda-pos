@@ -2,7 +2,8 @@ import "server-only";
 import { balance, checkTotals, type CheckTotals } from "../core/pricing";
 import { minutesSince } from "../core/time";
 import { authorizeWithPin, can, type Staff } from "./auth";
-import { audit, bump, getBusiness } from "./business";
+import { CHANNEL_SHORT } from "../settings";
+import { audit, bump, getBusiness, nextNumber } from "./business";
 import { getDb, type Tx } from "./db";
 import { UserError } from "./errors";
 import { loadMenu, priceItem, type ChosenItem } from "./menu";
@@ -50,7 +51,10 @@ export interface CheckRow {
   number: number;
   table_id: string | null;
   table_name: string | null;
-  kind: "mesa" | "barra" | "llevar";
+  kind: "mesa" | "barra" | "llevar" | "domicilio";
+  /** local, rappi, didi o propio */
+  channel: string;
+  delivery: Delivery | null;
   name: string;
   guests: number;
   status: "open" | "bill" | "paid" | "void";
@@ -66,6 +70,18 @@ export interface CheckRow {
   updated_at: string;
 }
 
+/** Datos del domicilio: código del pedido en la plataforma o propio, cliente, dirección y empaque. */
+export interface Delivery {
+  code: string;
+  phone?: string;
+  address?: string;
+  notes?: string;
+  packedAt?: string;
+  packedBy?: string;
+  checklist?: string[];
+  riderAt?: string;
+}
+
 export interface CheckView extends CheckRow {
   label: string;
   items: CheckItem[];
@@ -79,14 +95,15 @@ export interface CheckView extends CheckRow {
   invoice: { id: string; number: number; prefix: string; public_token: string } | null;
 }
 
-export function checkLabel(c: Pick<CheckRow, "kind" | "table_name" | "name" | "number">) {
+export function checkLabel(c: Pick<CheckRow, "kind" | "table_name" | "name" | "number"> & { channel?: string; delivery?: Pick<Delivery, "code"> | null }) {
   if (c.kind === "mesa") return `Mesa ${c.table_name ?? "?"}`;
+  if (c.kind === "domicilio") return [CHANNEL_SHORT[c.channel ?? "propio"] ?? "Domicilio", c.delivery?.code, c.name].filter(Boolean).join(" · ");
   if (c.kind === "barra") return c.name ? `Barra · ${c.name}` : `Barra #${c.number}`;
   return c.name ? `Para llevar · ${c.name}` : `Para llevar #${c.number}`;
 }
 
 const CHECK_SELECT = `
-  select c.id, c.number, c.table_id, t.name as table_name, c.kind, c.name, c.guests, c.status, c.opened_by,
+  select c.id, c.number, c.table_id, t.name as table_name, c.kind, c.channel, c.delivery, c.name, c.guests, c.status, c.opened_by,
          s.name as waiter_name, s.color as waiter_color, c.opened_at, c.closed_at, c.customer_id, c.discount_pct,
          c.discount_reason, c.tip_answer, c.updated_at
     from checks c
@@ -213,7 +230,8 @@ export async function floorState(bizId: string) {
   return {
     zones,
     tables: tables.map((t) => ({ ...t, check: byTable.get(t.id) ?? null })) as TableView[],
-    others: checks.filter((c) => !c.table_id),
+    others: checks.filter((c) => !c.table_id && c.kind !== "domicilio"),
+    deliveries: checks.filter((c) => c.kind === "domicilio").length,
     checks,
     requests,
   };
@@ -242,8 +260,16 @@ export async function openCheck(staff: Staff, input: { tableId?: string | null; 
     const name = (input.name ?? "").trim().slice(0, 40);
     if (input.kind !== "mesa" && !name) throw new UserError("Escribe un nombre para la cuenta");
     const row = await tx.one<{ id: string }>(
-      "insert into checks (business_id, table_id, kind, name, guests, opened_by) values ($1, $2, $3, $4, $5, $6) returning id",
-      [staff.business_id, input.kind === "mesa" ? input.tableId : null, input.kind, name, Math.min(40, Math.max(1, Math.floor(input.guests ?? 2))), staff.id],
+      "insert into checks (business_id, number, table_id, kind, name, guests, opened_by) values ($1, $2, $3, $4, $5, $6, $7) returning id",
+      [
+        staff.business_id,
+        await nextNumber(tx, staff.business_id, "check"),
+        input.kind === "mesa" ? input.tableId : null,
+        input.kind,
+        name,
+        Math.min(40, Math.max(1, Math.floor(input.guests ?? 2))),
+        staff.id,
+      ],
     );
     await bump(tx, staff.business_id);
     return row!.id;
@@ -457,19 +483,32 @@ export interface Ticket {
   round: number;
   station: string;
   sentAt: string;
-  items: { id: string; name: string; qty: number; modifiers: Mod[]; note: string; status: string; source: string }[];
+  items: { id: string; name: string; qty: number; modifiers: Mod[]; note: string; status: string; source: string; ficha: string | null }[];
+  /** Pedido de domicilio: canal para el color del tiquete */
+  channel: string | null;
+  /** Domicilio: cuándo llega el domiciliario, para que la cocina priorice */
+  riderAt: string | null;
 }
 
 export async function kdsBoard(bizId: string, station: string | null) {
   const db = await getDb();
-  const rows = await db.query<CheckItem & { check_id: string; kind: CheckRow["kind"]; table_name: string | null; check_name: string; number: number; waiter: string | null }>(
+  const rows = await db.query<
+    CheckItem & { check_id: string; kind: CheckRow["kind"]; channel: string; delivery: Delivery | null; table_name: string | null; check_name: string; number: number; waiter: string | null; ficha: string | null }
+  >(
     `select i.id, i.check_id, i.name, i.qty, i.modifiers, i.note, i.status, i.round, i.station, i.sent_at, i.ready_at, i.source,
-            c.kind, t.name as table_name, c.name as check_name, c.number, s.name as waiter
+            c.kind, c.channel, c.delivery, t.name as table_name, c.name as check_name, c.number, s.name as waiter,
+            -- Ficha técnica: los gramajes de la receta, para que salga igual en todas las sedes
+            case when i.station = 'cocina' then (
+              select string_agg(trim(to_char(r.qty, 'FM99990.##')) || ' ' || g.unit || ' ' || lower(g.name), ' · ' order by r.qty desc)
+                from recipe_items r join ingredients g on g.id = r.ingredient_id where r.product_id = i.product_id
+            ) end as ficha
        from check_items i
        join checks c on c.id = i.check_id
        left join floor_tables t on t.id = c.table_id
        left join staff s on s.id = c.opened_by
-      where i.business_id = $1 and c.status in ('open','bill')
+      where i.business_id = $1
+        -- En el mostrador se cobra antes de preparar: la cuenta pagada sigue en cocina hasta que se entrega
+        and (c.status in ('open','bill') or (c.status = 'paid' and c.kind = 'llevar' and c.closed_at > now() - interval '4 hours'))
         and (i.status in ('sent','ready') or (i.status = 'delivered' and i.delivered_at > now() - interval '15 minutes'))
         ${station ? "and i.station = $2" : ""}
       order by i.sent_at, i.id`,
@@ -481,14 +520,16 @@ export async function kdsBoard(bizId: string, station: string | null) {
     const t = tickets.get(key) ?? {
       key,
       checkId: r.check_id,
-      label: checkLabel({ kind: r.kind, table_name: r.table_name, name: r.check_name, number: r.number }),
+      label: checkLabel({ kind: r.kind, table_name: r.table_name, name: r.check_name, number: r.number, channel: r.channel, delivery: r.delivery }),
+      channel: r.kind === "domicilio" ? r.channel : null,
+      riderAt: r.kind === "domicilio" ? (r.delivery?.riderAt ?? null) : null,
       waiter: r.waiter,
       round: r.round,
       station: r.station,
       sentAt: r.sent_at!,
       items: [],
     };
-    t.items.push({ id: r.id, name: r.name, qty: r.qty, modifiers: r.modifiers, note: r.note, status: r.status, source: r.source });
+    t.items.push({ id: r.id, name: r.name, qty: r.qty, modifiers: r.modifiers, note: r.note, status: r.status, source: r.source, ficha: r.ficha });
     tickets.set(key, t);
   }
   const all = [...tickets.values()];

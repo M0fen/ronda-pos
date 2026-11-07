@@ -10,11 +10,15 @@ import { Live } from "./live";
 
 export function PosNav({
   business,
+  whiteLabel,
+  sede,
   links,
   staff,
   happy,
 }: {
   business: string;
+  whiteLabel?: boolean;
+  sede?: string;
   links: { href: string; label: string }[];
   staff: { name: string; color: string; role: string };
   happy: string | null;
@@ -25,9 +29,9 @@ export function PosNav({
     <header className="no-print sticky top-0 z-40 border-b border-linea bg-cal/95 backdrop-blur">
       <div className="flex h-14 items-center gap-3 px-3 sm:px-4">
         <Link href="/salon" className="hidden shrink-0 text-xl font-extrabold tracking-tight [font-stretch:118%] md:block">
-          ronda
+          {whiteLabel ? business : "ronda"}
         </Link>
-        <span className="hidden max-w-[180px] truncate text-sm text-humo lg:block">{business}</span>
+        {whiteLabel ? (sede ? <span className="hidden max-w-[180px] truncate text-sm text-humo lg:block">{sede}</span> : null) : <span className="hidden max-w-[180px] truncate text-sm text-humo lg:block">{[business, sede].filter(Boolean).join(" · ")}</span>}
         <nav className="scrollbar-none flex flex-1 items-center gap-1 overflow-x-auto md:justify-center">
           {links.map((l) => {
             const active = pathname === l.href || pathname.startsWith(`${l.href}/`) || (l.href === "/salon" && pathname.startsWith("/cuenta"));

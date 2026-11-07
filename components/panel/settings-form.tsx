@@ -52,7 +52,8 @@ export function SettingsForm({ initial, demo, ephemeral }: { initial: Settings; 
           {text("business", "address", "Dirección")}
           {text("business", "instagram", "Instagram")}
         </Card>
-        <Card title="Marca en la carta QR">
+        <Card title="Marca">
+          {toggle("theme", "whiteLabel", "Usar la marca del local en todo el sistema", "Cambia el nombre de Ronda por el del local y pone estos colores en todas las pantallas. El color principal lleva letra blanca: usa uno oscuro.")}
           <div className="grid grid-cols-2 gap-3">
             {(["primary", "accent"] as const).map((k) => (
               <label key={k} className="flex items-center gap-3 rounded-2xl bg-cal p-3">
@@ -134,6 +135,13 @@ export function SettingsForm({ initial, demo, ephemeral }: { initial: Settings; 
           </div>
           {text("invoice", "resolution", "Resolución DIAN")}
           {text("receipt", "footer", "Mensaje al final del recibo")}
+        </Card>
+        <Card title="Domicilios">
+          {toggle("channels", "rappi", "Rappi")}
+          {text("channels", "rappiPct", "Comisión de Rappi (%)", { type: "number", hint: "La que tengas pactada: así la rentabilidad muestra lo que de verdad te queda por canal" })}
+          {toggle("channels", "didi", "DiDi Food")}
+          {text("channels", "didiPct", "Comisión de DiDi Food (%)", { type: "number" })}
+          {toggle("channels", "propio", "Domicilio propio", "Pedidos por WhatsApp o teléfono con tus domiciliarios")}
         </Card>
         <Card title="Costo del equipo">
           {toggle("labor", "exonerated", "Exonerado de salud, SENA e ICBF", "Artículo 114-1 del Estatuto Tributario. Aplica a la mayoría de las S.A.S.; confírmalo con tu contador.")}

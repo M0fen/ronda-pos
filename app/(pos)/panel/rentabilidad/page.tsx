@@ -17,7 +17,7 @@ export const metadata: Metadata = { title: "Rentabilidad" };
 
 const WEEKDAY = ["", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
 const pct = (part: number, total: number) => (total > 0 ? Math.round((part / total) * 100) : 0);
-const profitOf = (r: ProfitRow) => r.net - r.cogs - r.labor;
+const profitOf = (r: ProfitRow) => r.net - r.cogs - r.labor - r.commission;
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export default async function ProfitPage({ searchParams }: { searchParams: Promise<{ rango?: string }> }) {
@@ -33,6 +33,8 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
   const hours = t.minutes / 60;
   const laborPct = pct(t.labor, t.net);
   const cogsPct = pct(t.cogs, t.net);
+  const feePct = pct(t.commission, t.net);
+  const keepPct = Math.max(0, 100 - cogsPct - laborPct - feePct);
   const tone = (labor: number, net: number) => (!net ? (labor ? "red" : "none") : pct(labor, net) > r.alertPct ? "red" : pct(labor, net) > 30 ? "yellow" : "green");
   const tab = (active: boolean) => `rounded-xl px-4 py-2 text-[15px] font-semibold ${active ? "bg-tinto text-cal" : "text-tinto-2 hover:bg-tinto/6"}`;
   const now = bogotaParts();
@@ -100,7 +102,7 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
         <Stat wide label="Ventas netas" value={cop(t.net)} sub={`${t.checks} cuentas · propinas aparte: ${cop(t.tips)}`} />
         <Stat label="Insumos" value={`${cogsPct} %`} sub={`${cop(t.cogs)} según las recetas`} />
         <Stat label="Equipo" value={`${laborPct} %`} sub={`${cop(t.labor)} · ${fmtHours(t.minutes)} trabajadas`} alert={laborPct > r.alertPct} />
-        <Stat label="Utilidad bruta" value={cop(profit)} sub={`${pct(profit, t.net)} % de las ventas, antes de arriendo y servicios`} />
+        <Stat label="Lo que queda" value={cop(profit)} sub={`${pct(profit, t.net)} % de las ventas, después de insumos, equipo${t.commission ? " y comisiones" : ""}`} />
         <Stat label="Ventas por hora trabajada" value={hours ? cop(t.net / hours) : "—"} sub={hours ? `La hora del equipo cuesta en promedio ${cop(t.labor / hours)}` : "Nadie ha marcado turno"} />
       </section>
 
@@ -108,19 +110,21 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
         <section className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
           <h2 className="font-bold">De cada $100 que vendes</h2>
           <p className="mt-1 text-tinto-2">
-            ${cogsPct} se van en insumos, ${laborPct} en el equipo y te quedan ${Math.max(0, 100 - cogsPct - laborPct)} para arriendo, servicios y ganancia.
+            ${cogsPct} se van en insumos, ${laborPct} en el equipo{feePct ? `, $${feePct} en comisiones de las plataformas` : ""} y te quedan ${keepPct} para arriendo, servicios y ganancia.
             {cogsPct + laborPct > 60 ? " Insumos y equipo juntos pasan de 60: es la señal para ajustar turnos o precios." : " Insumos y equipo juntos están por debajo de 60, un rango sano para un restaurante."}
           </p>
           <div className="relative mt-4 flex h-5 overflow-hidden rounded-full bg-cal" aria-hidden>
             <span className="bg-fachada" style={{ width: `${Math.min(100, cogsPct)}%` }} />
             <span className="bg-balcon" style={{ width: `${Math.min(100 - Math.min(100, cogsPct), laborPct)}%` }} />
+            {feePct ? <span className="bg-cereza" style={{ width: `${feePct}%` }} /> : null}
             <span className="flex-1 bg-puerta" />
             <span className="absolute inset-y-0 w-0.5 bg-tinto" style={{ left: "60%" }} />
           </div>
           <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-humo">
             <Legend color="bg-fachada" label={`Insumos ${cogsPct} %`} />
             <Legend color="bg-balcon" label={`Equipo ${laborPct} %`} />
-            <Legend color="bg-puerta" label={`Queda ${Math.max(0, 100 - cogsPct - laborPct)} %`} />
+            {feePct ? <Legend color="bg-cereza" label={`Comisiones ${feePct} %`} /> : null}
+            <Legend color="bg-puerta" label={`Queda ${keepPct} %`} />
             <span>La raya marca el 60 %</span>
           </div>
         </section>
@@ -143,7 +147,7 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
             <>
               <h2 className="font-bold">Qué turnos se pagan solos</h2>
               <p className="mb-3 text-sm text-humo">
-                Promedio de cada turno en las últimas {span} jornadas: utilidad después de insumos y equipo, y cuánto de lo vendido se va en el equipo.
+                Promedio de cada turno en las últimas {span} jornadas: lo que queda después de insumos y equipo, y cuánto de lo vendido se va en el equipo.
               </p>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[420px] border-separate border-spacing-1.5 text-left">
@@ -163,7 +167,7 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
                         <th className="pr-2 text-[15px] font-semibold">{WEEKDAY[g.dow]}</th>
                         {g.cells.map((c, i) => {
                           if (!c.n) return <td key={i} className="rounded-xl bg-cal px-3 py-2 text-humo">—</td>;
-                          const avg = { net: c.net / c.n, labor: c.labor / c.n, cogs: c.cogs / c.n };
+                          const avg = { net: c.net / c.n, labor: c.labor / c.n, cogs: c.cogs / c.n + c.commission / c.n };
                           const tn = tone(avg.labor, avg.net);
                           return (
                             <td key={i} className={cn("rounded-xl px-3 py-2", tn === "red" ? "bg-cereza-soft" : tn === "yellow" ? "bg-fachada-soft" : "bg-puerta-soft")}>
@@ -216,6 +220,28 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
               <p className="mt-1 text-sm text-humo">Nadie pasa de la jornada ni de las horas extra permitidas en este periodo.</p>
             )}
           </div>
+          {r.channels.length > 1 ? (
+            <div className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
+              <h2 className="font-bold">Por canal</h2>
+              <p className="mb-2 text-sm text-humo">Lo que entra por cada canal y lo que se queda la plataforma, con la comisión pactada en Ajustes.</p>
+              <ul className="divide-y divide-linea">
+                {r.channels.map((c) => (
+                  <li key={c.key} className="flex items-center justify-between gap-3 py-2.5">
+                    <span>
+                      <span className="block font-semibold">{c.label}</span>
+                      <span className="text-sm text-humo">
+                        {pct(c.net, t.net)} % de las ventas · {c.checks} pedidos · ticket {cop(c.total / Math.max(1, c.checks))}
+                      </span>
+                    </span>
+                    <span className="text-right">
+                      <span className="block font-semibold tnum">{cop(c.net)}</span>
+                      {c.commission ? <span className="text-sm text-cereza tnum">− {cop(c.commission)} de comisión ({c.pct} %)</span> : <span className="text-sm text-humo">Sin comisión</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -300,8 +326,9 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
                   <th className="py-2 pr-3 text-right font-semibold">Ventas netas</th>
                   <th className="py-2 pr-3 text-right font-semibold">Insumos</th>
                   <th className="py-2 pr-3 text-right font-semibold">Equipo</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Comisiones</th>
                   <th className="py-2 pr-3 text-right font-semibold">% equipo</th>
-                  <th className="py-2 text-right font-semibold">Utilidad</th>
+                  <th className="py-2 text-right font-semibold">Queda</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-linea">
@@ -315,6 +342,7 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
                       <td className="py-2.5 pr-3 text-right tnum">{cop(d.total.net)}</td>
                       <td className="py-2.5 pr-3 text-right tnum">{cop(d.total.cogs)}</td>
                       <td className="py-2.5 pr-3 text-right tnum">{cop(d.total.labor)}</td>
+                      <td className="py-2.5 pr-3 text-right tnum">{d.total.commission ? cop(d.total.commission) : "—"}</td>
                       <td className="py-2.5 pr-3 text-right">
                         <Pill tone={tn === "red" ? "red" : tn === "yellow" ? "yellow" : "green"}>{d.total.net ? `${pct(d.total.labor, d.total.net)} %` : "—"}</Pill>
                       </td>
@@ -375,7 +403,7 @@ function TurnoCard({ title, sub, row, tone }: { title: string; sub: string; row?
           <dd className="text-right tnum">{cop(row.cogs)}</dd>
           <dt className="text-humo">Equipo · {fmtHours(row.minutes)}</dt>
           <dd className="text-right tnum">{cop(row.labor)}</dd>
-          <dt className="font-semibold">Utilidad</dt>
+          <dt className="font-semibold">Queda</dt>
           <dd className={cn("text-right font-bold tnum", profit < 0 && "text-cereza")}>{cop(profit)}</dd>
         </dl>
       ) : (

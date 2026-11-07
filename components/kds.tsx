@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Check, CheckCheck, QrCode, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import { ArrowLeft, Bike, Check, CheckCheck, PackageCheck, QrCode, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
@@ -10,6 +10,7 @@ import type { Ticket } from "@/lib/server/checks";
 import { cn } from "@/lib/utils";
 import { Live } from "./live";
 import { report } from "./toast";
+import { CHANNEL_COLOR } from "@/lib/settings";
 
 type Board = { active: Ticket[]; ready: Ticket[]; done: Ticket[]; avgMinutes: number | null };
 
@@ -90,6 +91,9 @@ export function Kds({ board, station, business, staff, serverNow }: { board: Boa
             </Link>
           ))}
         </nav>
+        <a href="/pantalla" target="_blank" rel="noopener" className={btn("light", "sm")}>
+          Pantalla de turnos
+        </a>
         <p className="hidden text-sm text-cal/70 md:block">{board.avgMinutes ? `Promedio ${board.avgMinutes.toLocaleString("es-CO")} min` : "Sin tiempos aún"}</p>
         <button onClick={() => (setSound((s) => !s), !sound && beep())} className={btn(sound ? "warn" : "light", "sm")} aria-pressed={sound}>
           {sound ? <Volume2 size={16} /> : <VolumeX size={16} />} {sound ? "Sonido" : "Activar sonido"}
@@ -117,8 +121,10 @@ export function Kds({ board, station, business, staff, serverNow }: { board: Boa
                       </span>
                     </header>
                     <p className="px-4 pt-2 text-[13px] text-cal/60">
+                      {t.channel ? <span className="mr-1 rounded px-1.5 py-0.5 font-bold text-white" style={{ background: CHANNEL_COLOR[t.channel] ?? "#6b6660" }}>Domicilio</span> : null}
                       Ronda {t.round} · {t.station === "cocina" ? "Cocina" : "Barra"} · {t.waiter ?? ""}
                     </p>
+                    {t.riderAt ? <Rider at={t.riderAt} now={now} /> : null}
                     <ul className="flex-1 space-y-1 px-2 py-2">
                       {t.items.map((i) => {
                         const ready = i.status !== "sent";
@@ -136,6 +142,7 @@ export function Kds({ board, station, business, staff, serverNow }: { board: Boa
                                 <span className={cn("block text-[17px] font-semibold leading-tight", ready && "line-through")}>{i.name}</span>
                                 {i.modifiers.length ? <span className="block text-[14px] text-cal/70">{i.modifiers.map((m) => m.name).join(" · ")}</span> : null}
                                 {i.note ? <span className="mt-1 inline-block rounded-md bg-fachada px-1.5 py-0.5 text-[13px] font-bold text-tinto">{i.note}</span> : null}
+                                {i.ficha && !ready ? <span className="mt-1 block text-[12px] leading-snug text-cal/50">Ficha: {i.ficha}</span> : null}
                               </span>
                               {i.source === "qr" ? <QrCode size={16} className="mt-1 shrink-0 text-cal/50" aria-label="Pedido por QR" /> : null}
                             </button>
@@ -171,9 +178,16 @@ export function Kds({ board, station, business, staff, serverNow }: { board: Boa
                     <span className="text-[13px] text-cal/70">{t.waiter}</span>
                   </div>
                   <p className="mt-1 text-[15px] text-cal/85">{t.items.map((i) => `${i.qty} ${i.name}`).join(", ")}</p>
-                  <button className={btn("light", "md", "mt-2 w-full")} disabled={pending} onClick={() => act(() => kdsBumpAction(t.checkId, t.round, t.station, "delivered"))}>
-                    <CheckCheck size={18} /> Entregado
-                  </button>
+                  {t.channel ? (
+                    // El domicilio no se entrega en la mesa: pasa a empaque, donde se revisa la bolsa
+                    <Link href="/domicilios" className={btn("light", "md", "mt-2 w-full")}>
+                      <PackageCheck size={18} /> A empacar
+                    </Link>
+                  ) : (
+                    <button className={btn("light", "md", "mt-2 w-full")} disabled={pending} onClick={() => act(() => kdsBumpAction(t.checkId, t.round, t.station, "delivered"))}>
+                      <CheckCheck size={18} /> Entregado
+                    </button>
+                  )}
                 </article>
               ))}
               {!board.ready.length ? <p className="text-sm text-cal/50">Cuando marques algo como listo, el mesero lo ve en su salón.</p> : null}
@@ -199,5 +213,15 @@ export function Kds({ board, station, business, staff, serverNow }: { board: Boa
         </aside>
       </div>
     </div>
+  );
+}
+
+/** Cuánto falta para que llegue el domiciliario de la plataforma: la cocina prioriza con esto. */
+function Rider({ at, now }: { at: string; now: number }) {
+  const mins = Math.round((Date.parse(at) - now) / 60_000);
+  return (
+    <p className={cn("mx-4 mt-1.5 inline-flex w-fit items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[13px] font-semibold", mins <= 3 ? "bg-cereza text-white" : "bg-white/10 text-cal/85")}>
+      <Bike size={14} /> {mins > 0 ? `Domiciliario en ${mins} min` : mins === 0 ? "Domiciliario llegando" : `Domiciliario esperando hace ${-mins} min`}
+    </p>
   );
 }

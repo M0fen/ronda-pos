@@ -34,6 +34,7 @@ import {
   type CloseInput,
 } from "@/lib/server/payments";
 import { approveRequest, rejectRequest } from "@/lib/server/qr";
+import { createDelivery, dispatchDelivery, packDelivery } from "@/lib/server/delivery";
 
 /** Versión del local: si cambia, las pantallas se refrescan. */
 export async function pulseAction() {
@@ -168,3 +169,19 @@ export async function soldOutAction(productId: string, soldOut: boolean) {
   const staff = await requireStaff();
   return safely(() => updateProduct(staff, productId, { soldOut }), soldOut ? "Marcado como agotado" : "Disponible otra vez");
 }
+
+export async function createDeliveryAction(input: { channel: string; customer: string; code?: string; rider?: string; phone?: string; address?: string; notes?: string }) {
+  const staff = await requireStaff();
+  return safely(() => createDelivery(staff, input));
+}
+
+export async function packDeliveryAction(checkId: string, checked: string[]) {
+  const staff = await requireStaff();
+  return safely(() => packDelivery(staff, checkId, checked), "Pedido empacado y revisado");
+}
+
+export async function dispatchDeliveryAction(checkId: string) {
+  const staff = await requireStaff();
+  return safely(() => dispatchDelivery(staff, checkId), "Entregado al domiciliario");
+}
+

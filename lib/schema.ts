@@ -331,4 +331,29 @@ create index shifts_business on shifts (business_id, clock_in);
 create unique index shifts_one_open on shifts (staff_id) where clock_out is null;
 `,
   },
+  {
+    // Cadenas con varias sedes, consecutivos propios de cada sede y domicilios por canal (Rappi, DiDi, propio)
+    version: 3,
+    sql: `
+alter table businesses add column chain_id uuid;
+alter table businesses add column sede text not null default '';
+create index businesses_chain on businesses (chain_id);
+
+create table counters (
+  business_id uuid not null references businesses(id) on delete cascade,
+  kind text not null,
+  last bigint not null default 0,
+  primary key (business_id, kind)
+);
+
+alter table checks drop constraint checks_kind_check;
+alter table checks add constraint checks_kind_check check (kind in ('mesa','barra','llevar','domicilio'));
+alter table checks add column channel text not null default 'local';
+alter table checks add column delivery jsonb;
+create index checks_delivery on checks (business_id, kind, status);
+
+alter table payments drop constraint payments_method_check;
+alter table payments add constraint payments_method_check check (method in ('efectivo','nequi','breb','tarjeta','daviplata','plataforma'));
+`,
+  },
 ];

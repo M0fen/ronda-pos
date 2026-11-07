@@ -1,14 +1,10 @@
 import { MessageCircle } from "lucide-react";
-import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { RoundTicket } from "@/components/landing/round-ticket";
 import { btn } from "@/components/ui";
-
-export const metadata: Metadata = {
-  title: "Ronda · POS para cafés y bares",
-  description: "Mesas, barra y cocina sin papel, factura electrónica, Bre-B, sellos para tus clientes y lo que cuesta cada turno, en la tablet que ya tienes.",
-};
+import { getBrand } from "@/lib/server/business";
+import { cn } from "@/lib/utils";
 
 const WHATSAPP = process.env.NEXT_PUBLIC_SALES_WHATSAPP ?? "573122143556";
 const wa = (text: string) => `https://wa.me/${WHATSAPP}?text=${encodeURIComponent(text)}`;
@@ -21,9 +17,14 @@ const FEATURES = [
   },
   {
     title: "Barra y cocina sin papel",
-    text: "Los pedidos llegan con su tiempo corriendo y un sonido. Un toque y el mesero ve que está listo. Sirve en una tablet o en un televisor con navegador.",
+    text: "Los pedidos llegan con su tiempo corriendo, un sonido y la ficha de cada plato con los gramos de la receta, para que salga igual en todas las sedes. En el mostrador, una pantalla de turnos llama a cada cliente por su número.",
     shot: "/shots/barra.webp",
     dark: true,
+  },
+  {
+    title: "Rappi y domicilios, sin errores en la bolsa",
+    text: "Rappi y el domicilio propio en un solo tablero, de que entran a que salen. La cocina ve en cuánto llega el domiciliario y ninguna bolsa se cierra sin revisar la lista: cada producto con sus salsas, los cubiertos y la factura.",
+    shot: "/shots/domicilios.webp",
   },
   {
     title: "Cobrar toma segundos",
@@ -43,8 +44,13 @@ const FEATURES = [
   },
   {
     title: "Sabes qué turno se paga solo",
-    text: "Cada quien marca su entrada y su salida con su PIN. Ronda cruza lo que cuesta el equipo, con recargos nocturnos, dominicales y festivos, con lo que vende cada turno, y te avisa antes de que alguien pase de 42 horas.",
+    text: "Cada quien marca su entrada y su salida con su PIN. El sistema cruza lo que cuesta el equipo, con recargos nocturnos, dominicales y festivos, con lo que vende cada turno, y te avisa antes de que alguien pase de 42 horas.",
     shot: "/shots/rentabilidad.webp",
+  },
+  {
+    title: "Todas las sedes en una pantalla",
+    text: "Ventas, insumos, equipo y comisiones de Rappi de cada sede, lado a lado: cuál deja más, cuál hay que revisar y qué hay que comprar en cada una. Cada sede tiene su equipo, su caja y su propia numeración de facturas.",
+    shot: "/shots/cadena.webp",
   },
   {
     title: "El dueño duerme tranquilo",
@@ -55,52 +61,71 @@ const FEATURES = [
 
 const FAQ = [
   ["¿Tengo que comprar equipos?", "No. Funciona en la tablet o el celular que ya tienes. Si quieres imprimir la comanda y la factura, sirve una impresora térmica de 80 mm de red."],
-  ["¿Qué pasa si se cae el internet?", "Ronda trabaja en línea. Si se cae el internet del local, la tablet puede seguir con los datos de un celular."],
-  ["¿Emite factura electrónica?", "Sí, a través de un proveedor tecnológico autorizado por la DIAN, que se conecta cuando Ronda se instala en tu local. Si el cliente pide la factura a su nombre, se pone su NIT o cédula en el cobro. En la demo la factura es de prueba: se numera y lleva su código QR, pero no se envía a la DIAN."],
+  ["¿Qué pasa si se cae el internet?", "El sistema trabaja en línea. Si se cae el internet del local, la tablet puede seguir con los datos de un celular."],
+  ["¿Emite factura electrónica?", "Sí, a través de un proveedor tecnológico autorizado por la DIAN, que se conecta cuando el sistema se instala en el local. Si el cliente pide la factura a su nombre, se pone su NIT o cédula en el cobro. En la demo la factura es de prueba: se numera y lleva su código QR, pero no se envía a la DIAN."],
   ["¿Cómo sabe lo que cuesta cada turno?", "Con el salario o el valor de la hora de cada persona y las horas que marca con su PIN. Suma los recargos nocturnos, dominicales y festivos de la ley vigente, la seguridad social y las prestaciones. Es una estimación para decidir turnos: la nómina la liquida tu contador."],
+  ["¿Sirve para varias sedes?", "Sí. Cada sede trabaja con su equipo, su caja, su inventario y su numeración de facturas, y el dueño las ve todas juntas en la pantalla de la cadena. La tablet de cada sede muestra solo a su equipo al entrar."],
+  ["¿Se conecta con Rappi?", "Hoy el pedido de Rappi se pasa al tablero de domicilios en segundos, con su código y los minutos del domiciliario, y de ahí sigue como cualquier pedido: cocina, lista de empaque y factura. La conexión directa, para que los pedidos entren solos, se hace con la API de aliados de Rappi o con un integrador, y Rappi tiene que aprobarla."],
   ["¿Cómo funciona el pago con Bre-B?", "El cliente paga a la llave de tu negocio desde cualquier banco y la plata llega al instante. En la caja se registra con la referencia del pago."],
   ["¿De quién son los datos?", "Tuyos. Los datos de tus clientes se guardan solo con su autorización, como pide la Ley 1581."],
 ];
 
-export default function Landing() {
+export default async function Landing() {
+  // Con la marca del local (Ajustes → Marca), la portada es la de su propio sistema
+  const brand = await getBrand();
+  const wl = brand.whiteLabel;
+  const open = wl ? "Abrir el sistema" : "Probar la demo";
+  const hello = wl ? `Hola, vi la propuesta del sistema para ${brand.name}` : "Hola, quiero probar Ronda en mi local";
   return (
     <div className="bg-cal">
-      <header className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-4 sm:px-6">
-        <span className="text-2xl font-extrabold tracking-tight [font-stretch:122%]">ronda</span>
-        <nav className="ml-auto hidden gap-6 text-[15px] font-semibold text-tinto-2 md:flex">
-          <a href="#funciones" className="hover:text-tinto">
-            Funciones
-          </a>
-          <a href="#preguntas" className="hover:text-tinto">
-            Preguntas
-          </a>
-        </nav>
-        <Link href="/entrar" className={btn("dark", "md", "ml-auto md:ml-0")}>
-          Probar la demo
-        </Link>
-      </header>
-
-      <section className="mx-auto grid max-w-6xl gap-10 px-4 pt-8 pb-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:pt-14">
-        <div>
-          <h1 className="text-[clamp(2.6rem,7vw,4.8rem)] leading-[0.95] font-extrabold tracking-tight [font-stretch:115%]">Tu local en una tablet.</h1>
-          <p className="mt-6 max-w-[34ch] text-xl leading-relaxed text-tinto-2">
-            Mesas, barra y cocina sin papel, factura electrónica, Bre-B, sellos para tus clientes y lo que cuesta cada turno, en la tablet o el celular que ya tienes.
-          </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link href="/entrar" className={btn("primary", "xl")}>
-              Probar la demo
-            </Link>
-            <a href={wa("Hola, quiero probar Ronda en mi local")} target="_blank" rel="noopener" className={btn("soft", "xl")}>
-              <MessageCircle size={20} /> Escribir por WhatsApp
+      <div className={wl ? "bg-balcon text-white" : ""}>
+        <header className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-4 sm:px-6">
+          <span className="text-2xl font-extrabold tracking-tight [font-stretch:122%]">{wl ? brand.name : "ronda"}</span>
+          <nav className={cn("ml-auto hidden gap-6 text-[15px] font-semibold md:flex", wl ? "text-white/75" : "text-tinto-2")}>
+            <a href="#funciones" className={wl ? "hover:text-white" : "hover:text-tinto"}>
+              Funciones
             </a>
+            <a href="#preguntas" className={wl ? "hover:text-white" : "hover:text-tinto"}>
+              Preguntas
+            </a>
+          </nav>
+          <Link href="/entrar" className={btn(wl ? "warn" : "dark", "md", "ml-auto md:ml-0")}>
+            {open}
+          </Link>
+        </header>
+
+        <section className="mx-auto grid max-w-6xl gap-10 px-4 pt-8 pb-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:pt-14">
+          <div>
+            <h1 className="text-[clamp(2.6rem,7vw,4.8rem)] leading-[0.95] font-extrabold tracking-tight [font-stretch:115%]">
+              {wl ? (
+                <>
+                  {brand.name}, <span className="text-fachada">en una tablet.</span>
+                </>
+              ) : (
+                "Tu local en una tablet."
+              )}
+            </h1>
+            <p className={cn("mt-6 max-w-[34ch] text-xl leading-relaxed", wl ? "text-white/80" : "text-tinto-2")}>
+              Mesas, barra y cocina sin papel, domicilios de Rappi, factura electrónica, Bre-B, lo que cuesta cada turno y todas las sedes en una pantalla, en la tablet o el celular que ya tienes.
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <Link href="/entrar" className={btn(wl ? "warn" : "primary", "xl")}>
+                {open}
+              </Link>
+              <a href={wa(hello)} target="_blank" rel="noopener" className={btn(wl ? "light" : "soft", "xl")}>
+                <MessageCircle size={20} /> Escribir por WhatsApp
+              </a>
+            </div>
+            <p className={cn("mt-4 text-sm", wl ? "text-white/60" : "text-humo")}>
+              {wl ? `Con la carta de ${brand.name}, su equipo y el servicio en marcha. Los datos son de ejemplo.` : "La demo abre sin registro, con un local de ejemplo y el servicio en marcha."}
+            </p>
           </div>
-          <p className="mt-4 text-sm text-humo">La demo abre sin registro, con la carta de Sr. Patata y el servicio en marcha.</p>
-        </div>
-        <div className="rounded-[32px] bg-[#e9ebe4] p-5 sm:p-7">
-          <p className="mb-3 text-sm font-semibold text-tinto-2">Arma una ronda: toca los productos</p>
-          <RoundTicket />
-        </div>
-      </section>
+          <div className="rounded-[32px] bg-[#e9ebe4] p-5 text-tinto sm:p-7">
+            <p className="mb-3 text-sm font-semibold text-tinto-2">Arma una ronda: toca los productos</p>
+            <RoundTicket business={wl ? brand.name : "Tu local"} />
+          </div>
+        </section>
+      </div>
 
       <section id="funciones" className="border-t border-linea bg-papel">
         <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
@@ -142,19 +167,19 @@ export default function Landing() {
         </div>
       </section>
 
-      <section className="bg-tinto text-cal">
+      <section className={wl ? "bg-balcon text-white" : "bg-tinto text-cal"}>
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-6 px-4 py-14 sm:px-6">
-          <h2 className="max-w-[18ch] text-4xl font-extrabold tracking-tight [font-stretch:112%]">Pruébala con la carta de un local de verdad.</h2>
+          <h2 className="max-w-[18ch] text-4xl font-extrabold tracking-tight [font-stretch:112%]">{wl ? `Así se vive un turno en ${brand.name}.` : "Pruébala con la carta de un local de verdad."}</h2>
           <div className="flex flex-wrap gap-3">
             <Link href="/entrar" className={btn("warn", "xl")}>
-              Abrir la demo
+              {wl ? open : "Abrir la demo"}
             </Link>
-            <a href={wa("Hola, quiero Ronda para mi local")} target="_blank" rel="noopener" className={btn("light", "xl")}>
+            <a href={wa(wl ? hello : "Hola, quiero Ronda para mi local")} target="_blank" rel="noopener" className={btn("light", "xl")}>
               <MessageCircle size={20} /> WhatsApp
             </a>
           </div>
         </div>
-        <p className="mx-auto max-w-6xl px-4 pb-8 text-sm text-cal/60 sm:px-6">Ronda · hecho en Pereira por PuntoNeutro.</p>
+        <p className="mx-auto max-w-6xl px-4 pb-8 text-sm text-cal/60 sm:px-6">{wl ? `Sistema de ${brand.name}` : "Ronda"} · hecho en Pereira por PuntoNeutro.</p>
       </section>
     </div>
   );

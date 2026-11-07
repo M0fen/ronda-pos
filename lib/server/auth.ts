@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { cache } from "react";
 import { pinHash } from "../seed";
 import { createSessionToken, SESSION_COOKIE, SESSION_HOURS, verifySessionToken } from "../session";
+import { SEDE_COOKIE } from "./business";
 import { getDb, type Tx } from "./db";
 import { UserError } from "./errors";
 
@@ -40,6 +41,8 @@ export const can = {
   closeCash: (s: Staff) => s.role === "owner" || s.role === "admin" || s.role === "cashier",
   voidSent: (s: Staff) => s.role === "owner" || s.role === "admin" || s.role === "cashier",
   panel: (s: Staff) => s.role === "owner" || s.role === "admin" || s.role === "cashier",
+  /** Ver todas las sedes juntas: solo el dueño; el administrador de cada sede ve la suya */
+  chain: (s: Staff) => s.role === "owner",
 };
 
 const attempts = new Map<string, { count: number; until: number }>();
@@ -77,6 +80,7 @@ export async function checkPin(staffId: string, pin: string): Promise<Staff> {
 export async function loginWithPin(staffId: string, pin: string) {
   const staff = await checkPin(staffId, pin);
   const token = await createSessionToken({ id: staff.id, biz: staff.business_id, role: staff.role });
+  (await cookies()).set(SEDE_COOKIE, staff.business_id, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 365 * 86_400, secure: process.env.NODE_ENV === "production" });
   (await cookies()).set(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
