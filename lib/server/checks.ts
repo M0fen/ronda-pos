@@ -921,6 +921,8 @@ export interface Ticket {
   guests: number;
   /** Lo que esa cuenta tiene retenido en esta estación: sale después, pero ya se puede ir alistando */
   held: { name: string; qty: number }[];
+  /** La cuenta cambió de mesa hace poco: de cuál venía, para que nadie lleve el plato a la mesa vieja */
+  movedFrom: string | null;
 }
 
 /** Algo que barra o cocina ya tenía en pantalla y se anuló: se ve en rojo hasta que alguien lo marca como visto. */
@@ -945,7 +947,7 @@ const GRAMS = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 });
 export async function kdsBoard(bizId: string, station: string | null) {
   const db = await getDb();
   const params = station ? [bizId, station] : [bizId];
-  const [rows, heldRows, voidRows, avg] = await Promise.all([
+  const [rows, heldRows, voidRows, avg, moves] = await Promise.all([
     db.query<
       CheckItem & {
         check_id: string;
@@ -1027,7 +1029,16 @@ export async function kdsBoard(bizId: string, station: string | null) {
         where business_id = $1 and ready_at > now() - interval '3 hours' and sent_at is not null ${station ? "and station = $2" : ""}`,
       params,
     ),
+    // Cambios de mesa de los últimos 20 minutos: el tiquete dice de qué mesa venía
+    db.query<{ check_id: string; from_table: string | null }>(
+      `select distinct on (detail->>'checkId') detail->>'checkId' as check_id, detail->>'from' as from_table
+         from audit_log
+        where business_id = $1 and action = 'table_changed' and created_at > now() - interval '20 minutes'
+        order by detail->>'checkId', created_at desc`,
+      [bizId],
+    ),
   ]);
+  const movedFrom = new Map(moves.filter((m) => m.from_table).map((m) => [m.check_id, m.from_table]));
   const tickets = new Map<string, Ticket>();
   for (const r of rows) {
     const key = `${r.check_id}:${r.round}:${r.station}`;
@@ -1046,6 +1057,7 @@ export async function kdsBoard(bizId: string, station: string | null) {
       sentAt: r.sent_at!,
       items: [],
       held: [],
+      movedFrom: movedFrom.get(r.check_id) ?? null,
     };
     // Los gramajes se escriben aquí y no en SQL: 22,5 g sale como 22,5 (no como 23)
     const ficha = r.ficha?.length ? r.ficha.map((x) => `${GRAMS.format(Number(x.q))} ${x.u} ${x.n}`).join(" · ") : null;

@@ -202,6 +202,20 @@ describe("barra y cuentas", () => {
     expect(log).toBeTruthy();
   });
 
+  it("cambiar de mesa: la cuenta aparte se va con la principal y barra ve de qué mesa venía", async () => {
+    const { id, table } = await tableCheck([["Solomito Cheese", 2]]);
+    await checks.sendRound(juanPablo, id);
+    const line = (await items(id))[0]!;
+    const child = await checks.moveItems(juanPablo, id, { items: [{ id: line.id, qty: 1 }], to: { split: true } });
+    const target = await freeTable([table.id]);
+    await checks.updateCheckMeta(juanPablo, id, { tableId: target.id });
+    const tile = (await checks.floorState(biz)).tables.find((t) => t.id === target.id)!;
+    expect(tile.check?.id).toBe(id);
+    expect(tile.splits.map((s) => s.id)).toEqual([child.id]);
+    const board = await checks.kdsBoard(biz, "cocina");
+    expect(board.active.find((t) => t.checkId === id)?.movedFrom).toBe(table.name);
+  });
+
   it("una cortesía pide el motivo y queda en la auditoría", async () => {
     const { id } = await tableCheck([["Agua", 1]]);
     await checks.sendRound(juanPablo, id);

@@ -381,6 +381,7 @@ export function Kds({
                     <p className="px-4 pt-2 text-[13px] leading-6 text-cal/60">
                       <KindChip t={t} />
                       {t.paid ? <span className="mr-1 rounded bg-puerta px-1.5 py-0.5 font-bold text-white">Pagado</span> : null}
+                      {t.movedFrom ? <span className="mr-1 rounded bg-fachada px-1.5 py-0.5 font-bold text-tinto">Antes en la mesa {t.movedFrom}</span> : null}
                       {allergy ? <AllergyBadge /> : null}
                       Ronda {t.round} · {t.station === "cocina" ? "Cocina" : "Barra"}
                       {t.waiter ? ` · ${t.waiter}` : ""}
@@ -427,6 +428,7 @@ export function Kds({
                     <span className="min-w-0 truncate text-lg font-bold">{t.label}</span>
                     <span className="shrink-0 text-[13px] text-cal/70">{t.waiter}</span>
                   </button>
+                  {t.movedFrom ? <p className="mt-1 w-fit rounded bg-fachada px-1.5 py-0.5 text-[13px] font-bold text-tinto">Antes en la mesa {t.movedFrom}</p> : null}
                   <p className="mt-1 text-[15px] text-cal/85">
                     {t.items.some((i) => i.allergy) ? <AllergyBadge /> : null}
                     {t.items.map((i) => `${i.qty} ${i.name}${i.seat ? ` (P${i.seat})` : ""}`).join(", ")}
