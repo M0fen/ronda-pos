@@ -39,6 +39,7 @@ Punto de venta para cafés, bares y restaurantes en Colombia (COP, impuesto al c
 - Ventas netas = sin impuesto ni propina (`invoices.subtotal`). El costo del equipo es una estimación para decidir turnos; la nómina la liquida el contador, y así se dice en pantalla.
 - Clientes y mensajes: solo con autorización explícita y vigente (`consent_at` sin `consent_withdrawn_at`, Ley 1581). En Panel → Clientes se retira la autorización o se borran los datos (las facturas se conservan); WhatsApp se abre uno por uno.
 - Celulares de 10 dígitos sin el 57 (`normalizePhone`).
+- Movimiento: solo el que responde a algo (abrir una hoja, confirmar, llegar un tiquete, cambiar una mesa), nunca de adorno, y nada con "reducir movimiento". Las animaciones están en `app/globals.css` (`sheet-*`, `toast-*`, `arrive`, `row-in`, `stamp-in`, `rise-line`); el salón destella la mesa que cambió (`useFlashOnChange`) y la barra desliza los tiquetes nuevos (`Arrive`). La portada tiene un solo momento por sección: el titular y la tirilla al cargar, y el turno con la tablet fija (`components/landing/shift-tour.tsx`).
 - Componentes de cliente solo donde hay interacción. Nada que dependa de la hora del navegador en el primer render: pasa la hora del servidor (ver `serverNow` en la barra) o usa `suppressHydrationWarning` en el número.
 - No guardes secretos en el código: todo va en variables de entorno (`.env.example`).
 

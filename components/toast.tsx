@@ -3,7 +3,7 @@
 import { Check, CircleAlert, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-type Toast = { id: number; text: string; tone: "ok" | "error"; undo?: () => void };
+type Toast = { id: number; text: string; tone: "ok" | "error"; undo?: () => void; leaving?: boolean };
 let counter = 0;
 
 export function toast(text: string, opts: { tone?: "ok" | "error"; undo?: () => void } = {}) {
@@ -27,7 +27,10 @@ export function Toaster() {
     const on = (e: Event) => {
       const t = (e as CustomEvent<Toast>).detail;
       setItems((list) => [...list.slice(-2), t]);
-      setTimeout(() => setItems((list) => list.filter((x) => x.id !== t.id)), t.undo ? 5000 : 3200);
+      const life = t.undo ? 5000 : 3200;
+      // Primero se desvanece y luego se quita
+      setTimeout(() => setItems((list) => list.map((x) => (x.id === t.id ? { ...x, leaving: true } : x))), life - 200);
+      setTimeout(() => setItems((list) => list.filter((x) => x.id !== t.id)), life);
     };
     window.addEventListener("ronda-toast", on);
     return () => window.removeEventListener("ronda-toast", on);
@@ -38,7 +41,7 @@ export function Toaster() {
         // Sin "Deshacer", el aviso no recibe toques: no tapa los botones de abajo
         <div
           key={t.id}
-          className={`${t.undo ? "pointer-events-auto" : "pointer-events-none"} flex max-w-md items-center gap-3 rounded-2xl px-4 py-3 text-[15px] font-medium shadow-lg ${t.tone === "error" ? "bg-cereza text-white" : "bg-tinto text-cal"}`}
+          className={`${t.undo && !t.leaving ? "pointer-events-auto" : "pointer-events-none"} ${t.leaving ? "toast-out" : "toast-in"} flex max-w-md items-center gap-3 rounded-2xl px-4 py-3 text-[15px] font-medium shadow-lg ${t.tone === "error" ? "bg-cereza text-white" : "bg-tinto text-cal"}`}
           role="status"
         >
           {t.tone === "error" ? <CircleAlert size={18} className="shrink-0" /> : <Check size={18} className="shrink-0" />}
