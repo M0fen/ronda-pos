@@ -128,7 +128,7 @@ export function Kds({
                 const secs = Math.floor(((now - new Date(t.sentAt).getTime()) / 1000) % 60);
                 const tone = mins >= 15 ? "bg-cereza" : mins >= 8 ? "bg-fachada text-tinto" : "bg-puerta";
                 return (
-                  <article key={t.key} className="flex flex-col overflow-hidden rounded-2xl bg-noche-2 ring-1 ring-white/8">
+                  <Arrive key={t.key} fresh={!!seen.current && !seen.current.has(t.key)} className="flex flex-col overflow-hidden rounded-2xl bg-noche-2 ring-1 ring-white/8">
                     <header className={cn("flex items-center justify-between gap-2 px-4 py-2.5", tone)}>
                       <span className="min-w-0 truncate text-xl font-bold [font-stretch:108%]">{t.label}</span>
                       <span className="shrink-0 text-xl font-bold tnum">
@@ -170,7 +170,7 @@ export function Kds({
                         <Check size={20} /> Listo todo
                       </button>
                     </div>
-                  </article>
+                  </Arrive>
                 );
               })}
             </div>
@@ -232,6 +232,12 @@ export function Kds({
 }
 
 /** Cuánto falta para que llegue el domiciliario de la plataforma: la cocina prioriza con esto. */
+/** Un tiquete que llega mientras la pantalla está abierta entra deslizándose; los que ya estaban no se mueven. */
+function Arrive({ fresh, className, children }: { fresh: boolean; className: string; children: React.ReactNode }) {
+  const [anim] = useState(fresh);
+  return <article className={cn(className, anim && "arrive")}>{children}</article>;
+}
+
 function Rider({ at, now }: { at: string; now: number }) {
   const mins = Math.round((Date.parse(at) - now) / 60_000);
   return (

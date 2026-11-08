@@ -23,7 +23,13 @@ const SIZES: Record<Size, string> = {
 };
 
 export function btn(variant: Variant = "soft", size: Size = "md", extra?: string) {
-  return cn("inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap font-semibold transition-colors disabled:cursor-not-allowed", VARIANTS[variant], SIZES[size], extra);
+  // Al tocar, el botón se hunde un poco: en la tablet confirma que el toque entró
+  return cn(
+    "inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap font-semibold transition-[color,background-color,box-shadow,filter,transform] duration-150 motion-safe:active:scale-[0.97] disabled:cursor-not-allowed disabled:active:scale-100",
+    VARIANTS[variant],
+    SIZES[size],
+    extra,
+  );
 }
 
 export function Money({ value, className }: { value: number; className?: string }) {

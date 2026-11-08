@@ -1,7 +1,7 @@
 import { MessageCircle } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 import { RoundTicket } from "@/components/landing/round-ticket";
+import { type ShiftStep, ShiftTour } from "@/components/landing/shift-tour";
 import { btn } from "@/components/ui";
 import { getBrand } from "@/lib/server/business";
 import { cn } from "@/lib/utils";
@@ -9,50 +9,62 @@ import { cn } from "@/lib/utils";
 const WHATSAPP = process.env.NEXT_PUBLIC_SALES_WHATSAPP ?? "573122143556";
 const wa = (text: string) => `https://wa.me/${WHATSAPP}?text=${encodeURIComponent(text)}`;
 
-const FEATURES = [
+/** La hora en que cada cosa pasa en un turno de noche (con espacios que no se parten). */
+const at = (time: string, half: "a" | "p") => `${time}\u00a0${half}.\u00a0m.`;
+
+const STEPS: ShiftStep[] = [
   {
+    time: at("5:00", "p"),
     title: "El salón, en vivo",
     text: "Cada mesa dice si está ocupada, si pidió la cuenta o si hay algo listo para llevar. Y avisa cuándo ofrecer otra ronda.",
     shot: "/shots/salon.webp",
   },
   {
+    time: at("6:30", "p"),
     title: "Barra y cocina sin papel",
     text: "Los pedidos llegan con su tiempo corriendo, un sonido y la ficha de cada plato con los gramos de la receta, para que salga igual en todas las sedes. En el mostrador, una pantalla de turnos llama a cada cliente por su número.",
     shot: "/shots/barra.webp",
-    dark: true,
   },
   {
+    time: at("7:15", "p"),
+    title: "La carta QR que vende",
+    text: "El cliente pide desde la mesa, llama al mesero y paga su parte con Bre-B. El mesero lo ve en el salón, aprueba y el pedido entra directo a la barra.",
+    shot: "/shots/qr.webp",
+    phone: true,
+    tablet: "/shots/salon.webp",
+  },
+  {
+    time: at("8:20", "p"),
     title: "Rappi y domicilios, sin errores en la bolsa",
     text: "Rappi y el domicilio propio en un solo tablero, de que entran a que salen. La cocina ve en cuánto llega el domiciliario y ninguna bolsa se cierra sin revisar la lista: cada producto con sus salsas, los cubiertos y la comanda.",
     shot: "/shots/domicilios.webp",
   },
   {
+    time: at("9:40", "p"),
     title: "Cobrar toma segundos",
     text: "Pregunta la propina como pide la ley, divide la cuenta, calcula las vueltas y recibe tarjeta, Nequi o Bre-B. Cada venta queda con su factura y su código QR.",
     shot: "/shots/cobro.webp",
   },
   {
-    title: "La carta QR que vende",
-    text: "El cliente pide desde la mesa, llama al mesero y paga su parte con Bre-B. El mesero aprueba y el pedido entra directo a la barra.",
-    shot: "/shots/qr.webp",
-    phone: true,
-  },
-  {
+    time: at("11:30", "p"),
     title: "Inventario por trago y por gramo",
-    text: "Una botella son 25 tragos; una bandeja para compartir, 600 gramos de papa. Se descuenta solo, te dice qué comprar y cuántos días te alcanza.",
+    text: "Una botella son 25 tragos; una bandeja para compartir, 600 gramos de papa. Se descuenta solo con cada venta, te dice qué comprar y cuántos días te alcanza.",
     shot: "/shots/inventario.webp",
   },
   {
+    time: at("12:10", "a"),
     title: "Sabes qué turno se paga solo",
     text: "Cada quien marca su entrada y su salida con su PIN. El sistema cruza lo que cuesta el equipo, con recargos nocturnos, dominicales y festivos, con lo que vende cada turno, y te avisa antes de que alguien pase de 42 horas.",
     shot: "/shots/rentabilidad.webp",
   },
   {
+    time: at("12:45", "a"),
     title: "Todas las sedes en una pantalla",
     text: "Ventas, insumos, equipo y comisiones de Rappi de cada sede, lado a lado: cuál deja más, cuál hay que revisar y qué hay que comprar en cada una. Cada sede tiene su equipo, su caja y su propia numeración de facturas.",
     shot: "/shots/cadena.webp",
   },
   {
+    time: at("1:15", "a"),
     title: "El dueño duerme tranquilo",
     text: "Anular lo enviado, una cortesía o un descuento grande los autoriza otra persona con su PIN, y todo queda con nombre y motivo. La caja se cierra con arqueo a ciegas y el resumen del día sale listo para mandarlo por WhatsApp.",
     shot: "/shots/panel.webp",
@@ -78,12 +90,12 @@ export default async function Landing() {
   const hello = wl ? `Hola, vi la propuesta del sistema para ${brand.name}` : "Hola, quiero probar Ronda en mi local";
   return (
     <div className="bg-cal">
-      <div className={wl ? "bg-balcon text-white" : ""}>
-        <header className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-4 sm:px-6">
+      <header className={cn("sticky top-0 z-40 backdrop-blur-md", wl ? "bg-balcon/92 text-white" : "border-b border-linea/70 bg-cal/90")}>
+        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3.5 sm:px-6">
           <span className="text-2xl font-extrabold tracking-tight [font-stretch:122%]">{wl ? brand.name : "ronda"}</span>
           <nav className={cn("ml-auto hidden gap-6 text-[15px] font-semibold md:flex", wl ? "text-white/75" : "text-tinto-2")}>
-            <a href="#funciones" className={wl ? "hover:text-white" : "hover:text-tinto"}>
-              Funciones
+            <a href="#turno" className={wl ? "hover:text-white" : "hover:text-tinto"}>
+              Un turno
             </a>
             <a href="#preguntas" className={wl ? "hover:text-white" : "hover:text-tinto"}>
               Preguntas
@@ -92,18 +104,17 @@ export default async function Landing() {
           <Link href="/entrar" className={btn(wl ? "warn" : "dark", "md", "ml-auto md:ml-0")}>
             {open}
           </Link>
-        </header>
-
+        </div>
+      </header>
+      <div className={wl ? "bg-balcon text-white" : ""}>
         <section className="mx-auto grid max-w-6xl gap-10 px-4 pt-8 pb-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:items-center lg:pt-14">
           <div>
-            <h1 className="text-[clamp(2.6rem,7vw,4.8rem)] leading-[0.95] font-extrabold tracking-tight [font-stretch:115%]">
-              {wl ? (
-                <>
-                  {brand.name}, <span className="text-fachada">en una tablet.</span>
-                </>
-              ) : (
-                "Tu local en una tablet."
-              )}
+            <h1 className={cn("text-[clamp(2.7rem,7.2vw,5.2rem)] leading-[0.92] font-black tracking-tight [font-stretch:118%]", wl && "text-fachada")}>
+              {(wl ? [`${brand.name},`, "en una tablet."] : ["Tu local", "en una tablet."]).map((line, i) => (
+                <span key={line} className="rise-line block overflow-hidden pb-[0.06em]" style={{ "--i": i } as React.CSSProperties}>
+                  <span>{line}</span>
+                </span>
+              ))}
             </h1>
             <p className={cn("mt-6 max-w-[34ch] text-xl leading-relaxed", wl ? "text-white/80" : "text-tinto-2")}>
               Mesas, barra y cocina sin papel, domicilios de Rappi, factura electrónica, Bre-B, lo que cuesta cada turno y todas las sedes en una pantalla, en la tablet o el celular que ya tienes.
@@ -120,46 +131,31 @@ export default async function Landing() {
               {wl ? `Con la carta de ${brand.name}, su equipo y el servicio en marcha. Los datos son de ejemplo.` : "La demo abre sin registro, con un local de ejemplo y el servicio en marcha."}
             </p>
           </div>
-          <div className="rounded-[32px] bg-[#e9ebe4] p-5 text-tinto sm:p-7">
+          <div className={cn("rounded-[34px] bg-[#ecebe5] p-5 text-tinto sm:p-7", wl ? "ring-[10px] ring-white/[0.07]" : "ring-1 ring-linea")}>
             <p className="mb-3 text-sm font-semibold text-tinto-2">Arma una ronda: toca los productos</p>
             <RoundTicket business={wl ? brand.name : "Tu local"} />
           </div>
         </section>
       </div>
 
-      <section id="funciones" className="border-t border-linea bg-papel">
-        <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
-          <h2 className="max-w-[20ch] text-4xl leading-tight font-extrabold tracking-tight [font-stretch:112%]">Lo que hace por ti en un turno</h2>
-          <div className="mt-12 space-y-16">
-            {FEATURES.map((f, i) => (
-              <article key={f.title} className={`grid items-center gap-8 ${i % 2 ? "lg:grid-cols-[1.5fr_1fr] lg:[&>div:first-child]:order-2" : "lg:grid-cols-[1fr_1.5fr]"}`}>
-                <div>
-                  <h3 className="text-2xl font-bold [font-stretch:108%]">{f.title}</h3>
-                  <p className="mt-3 max-w-[42ch] text-lg leading-relaxed text-tinto-2">{f.text}</p>
-                </div>
-                <div className={f.phone ? "flex justify-center rounded-[28px] bg-cal p-6" : ""}>
-                  <Image
-                    src={f.shot}
-                    alt={f.title}
-                    width={f.phone ? 390 : 1280}
-                    height={f.phone ? 844 : 800}
-                    className={f.phone ? "h-auto w-[260px] rounded-[28px] shadow-xl ring-1 ring-linea" : `h-auto w-full rounded-2xl shadow-xl ring-1 ${f.dark ? "ring-noche" : "ring-linea"}`}
-                  />
-                </div>
-              </article>
-            ))}
+      <section id="turno" className="scroll-mt-16 border-t border-linea bg-cal">
+        <div className="mx-auto max-w-6xl px-4 pt-16 pb-8 sm:px-6 lg:pt-24">
+          <h2 className="max-w-[16ch] text-[clamp(2.2rem,4.6vw,3.6rem)] leading-[0.98] font-black tracking-tight [font-stretch:118%]">{`Un turno en ${(wl ? brand.name : "tu local").replace(/ /g, "\u00a0")}`}</h2>
+          <p className="mt-4 max-w-[46ch] text-xl leading-relaxed text-tinto-2">De la primera mesa al resumen que le llega al dueño, sin papel y sin cuadernos.</p>
+          <div className="mt-10 lg:mt-4">
+            <ShiftTour steps={STEPS} business={wl ? brand.name : "Tu local"} />
           </div>
         </div>
       </section>
 
-      <section id="preguntas" className="mx-auto max-w-3xl px-4 py-16 sm:px-6">
+      <section id="preguntas" className="mx-auto max-w-3xl scroll-mt-16 px-4 py-16 sm:px-6">
         <h2 className="text-4xl font-extrabold tracking-tight [font-stretch:112%]">Preguntas</h2>
         <div className="mt-8 divide-y divide-linea">
           {FAQ.map(([q, a]) => (
-            <details key={q} className="group py-4">
+            <details key={q} className="faq group py-4">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-lg font-semibold">
                 {q}
-                <span className="text-2xl text-humo transition group-open:rotate-45">+</span>
+                <span className="text-2xl text-humo transition-transform duration-300 group-open:rotate-45">+</span>
               </summary>
               <p className="mt-2 text-[17px] leading-relaxed text-tinto-2">{a}</p>
             </details>
@@ -179,7 +175,7 @@ export default async function Landing() {
             </a>
           </div>
         </div>
-        <p className="mx-auto max-w-6xl px-4 pb-8 text-sm text-cal/60 sm:px-6">{wl ? `Sistema de ${brand.name}` : "Ronda"} · hecho en Pereira por PuntoNeutro.</p>
+        <p className="mx-auto max-w-6xl px-4 pb-8 text-sm text-cal/60 sm:px-6">{wl ? `Sistema de ${brand.name}, hecho en Pereira por PuntoNeutro.` : "Ronda, hecha en Pereira por PuntoNeutro."}</p>
       </section>
     </div>
   );

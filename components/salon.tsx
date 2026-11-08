@@ -3,7 +3,7 @@
 import { BellRing, Check, ChevronRight, Clock, Receipt, ShoppingBag, Users, Utensils, Wine, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { approveRequestAction, openCheckAction, rejectRequestAction } from "@/app/(pos)/actions";
 import { btn, Money, Pill } from "@/components/ui";
 import type { CheckSummary, RequestView, TableView } from "@/lib/server/checks";
@@ -198,13 +198,36 @@ export function Salon({ floor }: { floor: Floor }) {
  * franja que dice el estado de lejos (color del local; amarilla si pidió la cuenta; verde si hay algo listo para llevar).
  * El texto crece con la mesa (unidades del contenedor) para que no sobre espacio en pantallas grandes ni falte en tablets.
  */
+/** Cuando una mesa cambia (otro mesero, la barra, el QR), la tarjeta destella una vez para que se note. */
+function useFlashOnChange(sig: string) {
+  const ref = useRef<HTMLElement | null>(null);
+  const prev = useRef<string | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (prev.current !== null && prev.current !== sig && el && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const color = getComputedStyle(el).getPropertyValue("--color-fachada").trim() || "#FFC20E";
+      el.animate(
+        [
+          { outline: `4px solid ${color}`, outlineOffset: "0px" },
+          { outline: "4px solid transparent", outlineOffset: "14px" },
+        ],
+        { duration: 1100, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+      );
+    }
+    prev.current = sig;
+  }, [sig]);
+  return ref;
+}
+
 function TableTile({ table, onOpen, plan = false }: { table: TableView; onOpen: () => void; plan?: boolean }) {
   const c = table.check;
+  const flash = useFlashOnChange(c ? `${c.id}:${c.status}:${c.ready}:${c.inStation}:${c.total}` : "libre");
   const round = plan && table.shape === "round";
   const shape = round ? "aspect-square h-full max-w-full mx-auto rounded-full" : "h-full w-full rounded-[22px]";
   if (!c)
     return (
       <button
+        ref={flash as React.Ref<HTMLButtonElement>}
         onClick={onOpen}
         className={cn(
           "@container flex flex-col items-center justify-center gap-1 border-2 border-dashed border-linea-2 bg-papel/60 text-tinto-2 transition hover:border-balcon hover:bg-papel hover:text-tinto",
@@ -232,6 +255,7 @@ function TableTile({ table, onOpen, plan = false }: { table: TableView; onOpen: 
           : null;
   return (
     <Link
+      ref={flash as React.Ref<HTMLAnchorElement>}
       href={`/cuenta/${c.id}`}
       className={cn(
         "@container relative flex flex-col overflow-hidden bg-papel text-tinto shadow-[0_12px_28px_-16px_rgba(23,19,16,0.5)] ring-1 ring-black/8 transition hover:-translate-y-0.5",
