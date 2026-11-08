@@ -6,18 +6,27 @@ import { readPulse } from "@/lib/server/business";
 import {
   addItems,
   changeDraft,
+  changeWaiter,
   discardCheck,
+  kdsAckVoids,
   kdsBumpTicket,
+  kdsDetail,
   kdsSetItem,
   markDelivered,
+  mergeChecks,
+  moveItems,
   openCheck,
+  repeatRound,
   sendRound,
   setBillRequested,
   setDiscount,
   toggleCourtesy,
   updateCheckMeta,
   voidItem,
+  type DraftPatch,
+  type MoveTarget,
 } from "@/lib/server/checks";
+import { UserError } from "@/lib/server/errors";
 import { safely } from "@/lib/server/errors";
 import type { ChosenItem } from "@/lib/server/menu";
 import { updateProduct } from "@/lib/server/panel";
@@ -66,14 +75,35 @@ export async function addItemsAction(checkId: string, items: ChosenItem[]) {
   return safely(() => addItems(staff, checkId, items));
 }
 
-export async function changeDraftAction(itemId: string, patch: { qty?: number; note?: string }) {
+export async function changeDraftAction(itemId: string, patch: DraftPatch) {
   const staff = await requireStaff();
   return safely(() => changeDraft(staff, itemId, patch));
 }
 
-export async function sendRoundAction(checkId: string) {
+/** Envía lo nuevo; con held, solo lo retenido. */
+export async function sendRoundAction(checkId: string, held = false) {
   const staff = await requireStaff();
-  return safely(() => sendRound(staff, checkId));
+  return safely(() => sendRound(staff, checkId, { held }));
+}
+
+export async function repeatRoundAction(checkId: string, round: number) {
+  const staff = await requireStaff();
+  return safely(() => repeatRound(staff, checkId, round));
+}
+
+export async function moveItemsAction(checkId: string, input: { items: { id: string; qty: number }[]; to: MoveTarget }) {
+  const staff = await requireStaff();
+  return safely(() => moveItems(staff, checkId, input));
+}
+
+export async function mergeChecksAction(intoId: string, fromId: string) {
+  const staff = await requireStaff();
+  return safely(() => mergeChecks(staff, intoId, fromId), "Cuentas unidas");
+}
+
+export async function changeWaiterAction(checkId: string, input: { staffId: string; auth?: AuthInput | null }) {
+  const staff = await requireStaff();
+  return safely(() => changeWaiter(staff, checkId, input), "Cuenta pasada");
 }
 
 export async function voidItemAction(itemId: string, input: { reason: string; waste: boolean; auth?: AuthInput | null }) {
@@ -81,9 +111,9 @@ export async function voidItemAction(itemId: string, input: { reason: string; wa
   return safely(() => voidItem(staff, itemId, input));
 }
 
-export async function courtesyAction(itemId: string, auth?: AuthInput | null) {
+export async function courtesyAction(itemId: string, input: { reason?: string; auth?: AuthInput | null }) {
   const staff = await requireStaff();
-  return safely(() => toggleCourtesy(staff, itemId, auth), "Listo");
+  return safely(() => toggleCourtesy(staff, itemId, input), "Listo");
 }
 
 export async function discountAction(checkId: string, input: { pct: number; reason: string; auth?: AuthInput | null }) {
@@ -176,6 +206,21 @@ export async function kdsItemAction(itemId: string, status: "sent" | "ready") {
 export async function kdsBumpAction(checkId: string, round: number, station: string, status: "ready" | "delivered" | "recall") {
   const staff = await requireStaff();
   return safely(() => kdsBumpTicket(staff, checkId, round, station, status));
+}
+
+export async function kdsAckVoidsAction(itemIds: string[]) {
+  const staff = await requireStaff();
+  return safely(() => kdsAckVoids(staff, itemIds));
+}
+
+/** Todo lo de una cuenta para barra y cocina (la hoja que se abre al tocar un tiquete). */
+export async function kdsDetailAction(checkId: string) {
+  const staff = await requireStaff();
+  return safely(async () => {
+    const detail = await kdsDetail(staff.business_id, checkId);
+    if (!detail) throw new UserError("Esa cuenta ya no está");
+    return detail;
+  });
 }
 
 export async function openCashAction(opening: number) {

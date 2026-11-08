@@ -7,7 +7,7 @@ import { METHOD_LABEL } from "../settings";
 import { normalizePhone } from "../utils";
 import { can, requireAuth, verifyAuthorizer, type AuthInput, type Staff } from "./auth";
 import { audit, bump, getBusiness, nextNumber, type Business } from "./business";
-import { assertNotOverpaid, loadCheck } from "./checks";
+import { assertNotOverpaid, isClosed, loadCheck, promoteSplit } from "./checks";
 import { getDb, type Tx } from "./db";
 import { UserError } from "./errors";
 
@@ -57,7 +57,7 @@ export async function registerPayment(
   const db = await getDb();
   return db.tx(async (tx) => {
     const check = await lockCheck(tx, staff.business_id, checkId);
-    if (check.status === "paid" || check.status === "void") throw new UserError("Esta cuenta ya está cerrada");
+    if (isClosed(check.status)) throw new UserError("Esta cuenta ya está cerrada");
     if (check.items.some((i) => i.status === "draft")) throw new UserError("Hay productos sin enviar: envíalos o quítalos antes de cobrar");
     if (check.pendingPayments.length) throw new UserError("El cliente reportó un pago desde la mesa: confírmalo o recházalo antes de cobrar");
     if (amount > check.due) throw new UserError(`Solo falta pagar ${cop(check.due)}`);
@@ -98,7 +98,7 @@ export async function reviewClientPayment(staff: Staff, paymentId: string, appro
     if (!p || p.status !== "pending") throw new UserError("Ese pago ya se revisó");
     if (approve) {
       const check = await lockCheck(tx, staff.business_id, p.check_id);
-      if (check.status === "paid" || check.status === "void") throw new UserError("Esa cuenta ya está cerrada");
+      if (isClosed(check.status)) throw new UserError("Esa cuenta ya está cerrada");
       if (p.amount > check.due) throw new UserError("Ese pago supera lo que falta");
       const session = await currentCashSession(staff.business_id, tx);
       if (!session) throw new UserError("Abre la caja para confirmar el pago: así queda en un cierre");
@@ -159,7 +159,7 @@ export async function closeCheck(staff: Staff, checkId: string, input: CloseInpu
 /** El cierre dentro de una transacción ya abierta (el despacho de domicilios lo usa junto con el pago). */
 export async function closeCheckTx(tx: Tx, staff: Staff, biz: Business, checkId: string, input: CloseInput): Promise<{ invoiceId: string | null; stamps: number }> {
   const check = await lockCheck(tx, staff.business_id, checkId);
-  if (check.status === "paid" || check.status === "void") throw new UserError("Esta cuenta ya está cerrada");
+  if (isClosed(check.status)) throw new UserError("Esta cuenta ya está cerrada");
   if (check.items.some((i) => i.status === "draft")) throw new UserError("Hay productos sin enviar");
   if (!check.items.some((i) => i.status !== "void")) throw new UserError("La cuenta no tiene productos: descártala desde el menú de la cuenta");
   if (check.kind === "domicilio" && !check.delivery?.packedAt) throw new UserError("Empaca y revisa la bolsa antes de cerrar el domicilio");
@@ -228,6 +228,8 @@ export async function closeCheckTx(tx: Tx, staff: Staff, biz: Business, checkId:
     input.tipAnswer === "si" ? "si" : "no",
     customerId,
   ]);
+  // Si era la cuenta principal de la mesa y quedan cuentas aparte, la más antigua pasa a ser la principal
+  await promoteSplit(tx, checkId);
   // Lo listo se entregó; lo que aún se prepara sigue en barra y cocina hasta que salga
   await tx.query("update check_items set status = 'delivered', delivered_at = coalesce(delivered_at, now()) where check_id = $1 and status = 'ready'", [checkId]);
   await tx.query("update requests set status = 'done', handled_by = $2, handled_at = now() where check_id = $1 and status = 'pending'", [checkId, staff.id]);
@@ -249,7 +251,7 @@ export async function redeemReward(staff: Staff, checkId: string) {
   const db = await getDb();
   await db.tx(async (tx) => {
     const check = await lockCheck(tx, staff.business_id, checkId);
-    if (check.status === "paid" || check.status === "void") throw new UserError("Esta cuenta ya está cerrada");
+    if (isClosed(check.status)) throw new UserError("Esta cuenta ya está cerrada");
     if (!check.customer) throw new UserError("Primero agrega el cliente a la cuenta");
     if (check.customer.stamps < biz.settings.loyalty.goal) throw new UserError(`Le faltan ${biz.settings.loyalty.goal - check.customer.stamps} sellos`);
     const eligible = check.items
@@ -286,7 +288,7 @@ export async function attachCustomer(staff: Staff, checkId: string, input: { pho
   const db = await getDb();
   return db.tx(async (tx) => {
     const check = await lockCheck(tx, staff.business_id, checkId);
-    if (check.status === "paid" || check.status === "void") throw new UserError("Esta cuenta ya está cerrada");
+    if (isClosed(check.status)) throw new UserError("Esta cuenta ya está cerrada");
     const existing = await tx.one<{ id: string; consent_at: string | null; consent_withdrawn_at: string | null }>(
       "select id, consent_at, consent_withdrawn_at from customers where business_id = $1 and phone = $2",
       [staff.business_id, phone],

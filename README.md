@@ -1,6 +1,6 @@
 # Ronda
 
-Sistema de punto de venta para cafés, bares y restaurantes en Colombia: mesas, comandas a barra y cocina con la ficha de cada plato, domicilios de Rappi y propios con lista de empaque, mostrador con pantalla de turnos, cobro con propina voluntaria y cuentas divididas, Nequi y Bre-B, factura electrónica, carta QR, inventario por receta, sellos para clientes, caja con arqueo ciego, turnos marcados con PIN, el costo de cada turno y de cada persona frente a lo que vende, varias sedes con un panel de la cadena y el resumen del día por WhatsApp. Funciona en el navegador de la tablet o el celular que ya tiene el local.
+Sistema de punto de venta para cafés, bares y restaurantes en Colombia: mesas, comandas a barra y cocina con la ficha de cada plato, domicilios de Rappi y propios con lista de empaque, mostrador con pantalla de turnos, cobro con propina voluntaria y cuentas divididas, separadas o unidas, alergias y anulaciones que barra y cocina ven en rojo, Nequi y Bre-B, factura electrónica, carta QR, inventario por receta, sellos para clientes, caja con arqueo ciego, turnos marcados con PIN, el costo de cada turno y de cada persona frente a lo que vende, varias sedes con un panel de la cadena y el resumen del día por WhatsApp. Funciona en el navegador de la tablet o el celular que ya tiene el local.
 
 La portada (`/`) presenta el sistema. La demo abre en `/entrar` con Sr. Patata, cadena de Pereira y Dosquebradas con cuatro sedes (Circunvalar, Belmonte, Dosquebradas y el mostrador de Galicia Mall Plaza): su carta pública con precios redondeados y, en cada sede, su equipo con los turnos de las últimas dos semanas, ventas en mesa, para llevar y por Rappi, y el servicio en marcha.
 
@@ -20,18 +20,19 @@ Sede Circunvalar (la tablet abre aquí; la sede se cambia abajo en `/entrar`):
 
 En las otras sedes la pantalla de entrada muestra el PIN de cada persona: Belmonte (Daniela, administradora, 2121), Dosquebradas (Paola, administradora, 3131) y Galicia, un mostrador de centro comercial (Tatiana, caja, 4141).
 
-Un recorrido de cinco minutos:
+Un recorrido de diez minutos:
 
 1. Entra como **Juan Pablo**. Aprueba el pedido QR de la mesa 7 y abre la mesa 4.
 2. Pide un Antojo de patatas (elige la salsa), dos Club Colombia y una Burger smash doble. Toca **Enviar**.
 3. Anula la burger: como ya salió a cocina, la autoriza otra persona. Elige a Valentina (caja) y escribe su PIN (2222).
-4. Abre **Barra y cocina** en otra pestaña y marca el tiquete como listo. El salón lo muestra al instante.
-5. Cobra la mesa: propina sí, partes iguales, una parte con Bre-B (con la referencia del comprobante) y otra en efectivo. Sale la factura con su código QR.
-6. Entra como **Andrés** y mira el panel (Hoy y Ayer), el inventario, la carta, los clientes y los QR de las mesas. Abre un QR en el celular para ver la carta del cliente.
-7. En **Panel → Rentabilidad** mira qué turnos se pagan solos, cuánto costó cada persona con recargos y carga, y las alertas de jornada (42 horas, extras, domingos y festivos).
-8. En `/entrar`, toca **Marcar turno**, elige a Luisa y escribe 6666: queda en turno y suma a la mano de obra de hoy.
-9. Como **Andrés**, abre **Domicilios**: un pedido de Rappi en cada etapa. Acepta el nuevo, revisa la lista del que está para empacar (la bolsa no se cierra si falta algo) y entrega el que espera el domiciliario: queda pagado en la plataforma y con su factura. En **Barra y cocina** los tiquetes de domicilio dicen en cuánto llega el domiciliario.
-10. En **Panel → Cadena** compara las cuatro sedes: ventas, insumos, equipo, comisiones de Rappi, alertas y lo que hay que comprar en cada una. **Ir a Galicia** pasa la tablet a esa sede: abre **Pantalla de turnos** desde Barra y cocina para ver el televisor del mostrador.
+4. Abre **Barra y cocina** en otra pestaña: la burger anulada sale en rojo hasta que toques **Visto**, la mesa 1 trae una alergia, la 12 viene por puestos y la 8 anuncia lo que tiene retenido. Toca el nombre de un tiquete para ver la cuenta completa con su historial, y marca uno como listo: el salón lo muestra al instante.
+5. En la mesa 8, **Enviar lo retenido** manda la bandeja que esperaba. En **Más opciones**, separa una parte en otra cuenta, pasa productos a otra mesa o une otra cuenta a esta; en cada ronda, **Repetir** la deja lista para enviar.
+6. Cobra la mesa 4: propina sí, partes iguales, una parte con Bre-B (con la referencia del comprobante) y otra en efectivo. Sale la factura con su código QR.
+7. Entra como **Andrés** y mira el panel (Hoy y Ayer), el inventario, la carta, los clientes y los QR de las mesas. Abre un QR en el celular para ver la carta del cliente.
+8. En **Panel → Rentabilidad** mira qué turnos se pagan solos, cuánto costó cada persona con recargos y carga, y las alertas de jornada (42 horas, extras, domingos y festivos).
+9. En `/entrar`, toca **Marcar turno**, elige a Luisa y escribe 6666: queda en turno y suma a la mano de obra de hoy.
+10. Como **Andrés**, abre **Domicilios**: un pedido de Rappi en cada etapa. Acepta el nuevo, revisa la lista del que está para empacar (la bolsa no se cierra si falta algo) y entrega el que espera el domiciliario: queda pagado en la plataforma y con su factura. En **Barra y cocina** los tiquetes de domicilio dicen en cuánto llega el domiciliario.
+11. En **Panel → Cadena** compara las cuatro sedes: ventas, insumos, equipo, comisiones de Rappi, alertas y lo que hay que comprar en cada una. **Ir a Galicia** pasa la tablet a esa sede: abre **Pantalla de turnos** desde Barra y cocina para ver el televisor del mostrador.
 
 En **Panel → Ajustes** está el botón para reiniciar la demo.
 

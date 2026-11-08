@@ -3,6 +3,7 @@ import { Kds } from "@/components/kds";
 import { can, requireStaff } from "@/lib/server/auth";
 import { getBusiness } from "@/lib/server/business";
 import { kdsBoard } from "@/lib/server/checks";
+import { kdsThresholds } from "@/lib/settings";
 
 export const metadata: Metadata = { title: "Barra y cocina" };
 
@@ -11,5 +12,15 @@ export default async function KdsPage({ searchParams }: { searchParams: Promise<
   const staff = await requireStaff();
   const station = estacion === "barra" || estacion === "cocina" ? estacion : null;
   const [board, biz] = await Promise.all([kdsBoard(staff.business_id, station), getBusiness(staff.business_id)]);
-  return <Kds board={board} station={station} business={biz.name} businessId={biz.id} staff={{ name: staff.name, canCharge: can.charge(staff) }} serverNow={Date.now()} />;
+  return (
+    <Kds
+      board={board}
+      station={station}
+      business={biz.name}
+      businessId={biz.id}
+      staff={{ name: staff.name, canCharge: can.charge(staff) }}
+      serverNow={Date.now()}
+      thresholds={{ barra: kdsThresholds(biz.settings, "barra"), cocina: kdsThresholds(biz.settings, "cocina") }}
+    />
+  );
 }

@@ -21,7 +21,7 @@ export async function tableByToken(qrToken: string): Promise<(QrTable & { busine
   const db = await getDb();
   const t = await db.one<Omit<QrTable, "checkId">>("select id, name, business_id, qr_token from floor_tables where qr_token = $1 and active", [qrToken]);
   if (!t) return null;
-  const check = await db.one<{ id: string }>("select id from checks where table_id = $1 and status in ('open','bill') order by opened_at desc limit 1", [t.id]);
+  const check = await db.one<{ id: string }>("select id from checks where table_id = $1 and status in ('open','bill') and split_of is null order by opened_at desc limit 1", [t.id]);
   return { ...t, checkId: check?.id ?? null, business: await getBusiness(t.business_id) };
 }
 
@@ -156,7 +156,7 @@ async function acceptRequest(tx: Tx, bizId: string, requestId: string, actor: St
     if (!req.table_id) throw new UserError("Pedido sin mesa");
     const table = await tx.one("select id from floor_tables where id = $1 and business_id = $2 for update", [req.table_id, bizId]);
     if (!table) throw new UserError("Esa mesa ya no está");
-    const open = await tx.one<{ id: string; number: number }>("select id, number from checks where table_id = $1 and status in ('open','bill') limit 1", [req.table_id]);
+    const open = await tx.one<{ id: string; number: number }>("select id, number from checks where table_id = $1 and status in ('open','bill') and split_of is null limit 1", [req.table_id]);
     let number = open?.number ?? 0;
     if (open) checkId = open.id;
     else {
