@@ -3,7 +3,7 @@
 import { RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { resetDemoAction, saveSettingsAction } from "@/app/(pos)/panel/actions";
+import { applyTaxAction, resetDemoAction, saveSettingsAction } from "@/app/(pos)/panel/actions";
 import { btn } from "@/components/ui";
 import type { Settings } from "@/lib/settings";
 import { cn } from "@/lib/utils";
@@ -11,23 +11,57 @@ import { report } from "../toast";
 
 const DAYS = ["L", "M", "X", "J", "V", "S", "D"];
 
-export function SettingsForm({ initial, demo, ephemeral }: { initial: Settings; demo: boolean; ephemeral: boolean }) {
+export function SettingsForm({
+  initial,
+  demo,
+  ephemeral,
+  isOwner,
+  canReset,
+  lastInvoice,
+}: {
+  initial: Settings;
+  demo: boolean;
+  ephemeral: boolean;
+  isOwner: boolean;
+  canReset: boolean;
+  lastInvoice: number;
+}) {
   const router = useRouter();
   const [s, setS] = useState(initial);
+  // Lo que se escribe en los campos de números: vacío es un error, no un 0
+  const [raw, setRaw] = useState<Record<string, string>>({});
   const [pending, start] = useTransition();
   const up = <G extends keyof Settings, K extends keyof Settings[G]>(g: G, k: K, v: Settings[G][K]) => setS((x) => ({ ...x, [g]: { ...x[g], [k]: v } }));
-  const text = <G extends keyof Settings>(g: G, k: keyof Settings[G], label: string, opts: { type?: string; hint?: string } = {}) => (
-    <label className="block">
-      <span className="text-sm font-semibold text-humo">{label}</span>
-      <input
-        type={opts.type ?? "text"}
-        className="mt-1 h-12 w-full rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto"
-        value={String(s[g][k] ?? "")}
-        onChange={(e) => up(g, k, (opts.type === "number" ? Number(e.target.value) : e.target.value) as Settings[typeof g][typeof k])}
-      />
-      {opts.hint ? <span className="mt-1 block text-[13px] text-humo">{opts.hint}</span> : null}
-    </label>
-  );
+  const text = <G extends keyof Settings>(g: G, k: keyof Settings[G], label: string, opts: { type?: string; hint?: string; disabled?: boolean } = {}) => {
+    const key = `${String(g)}.${String(k)}`;
+    const number = opts.type === "number";
+    return (
+      <label className="block">
+        <span className="text-sm font-semibold text-humo">{label}</span>
+        <input
+          type={number ? "text" : (opts.type ?? "text")}
+          inputMode={number ? "numeric" : undefined}
+          disabled={opts.disabled}
+          className={cn("mt-1 h-12 w-full rounded-xl border bg-papel px-3 outline-none focus:border-tinto disabled:opacity-50", number && raw[key] === "" ? "border-cereza" : "border-linea-2")}
+          value={number ? (raw[key] ?? String(s[g][k] ?? "")) : String(s[g][k] ?? "")}
+          onChange={(e) => {
+            if (!number) return up(g, k, e.target.value as Settings[typeof g][typeof k]);
+            const v = e.target.value.replace(/[^\d]/g, "").slice(0, 9);
+            setRaw((r) => ({ ...r, [key]: v }));
+            if (v !== "") up(g, k, Number(v) as Settings[typeof g][typeof k]);
+          }}
+        />
+        {opts.hint ? <span className="mt-1 block text-[13px] text-humo">{opts.hint}</span> : null}
+      </label>
+    );
+  };
+  function save() {
+    const empty = Object.entries(raw).find(([, v]) => v === "");
+    if (empty) return report({ ok: false, error: "Hay un número vacío en los ajustes: escribe un valor (puede ser 0)" });
+    start(async () => void (report(await saveSettingsAction(s)) && (setRaw({}), router.refresh())));
+  }
+  const left = s.invoice.rangeTo ? s.invoice.rangeTo - lastInvoice : null;
+  const daysLeft = s.invoice.validTo ? Math.ceil((Date.parse(`${s.invoice.validTo}T23:59:59-05:00`) - Date.now()) / 86_400_000) : null;
   const toggle = <G extends keyof Settings>(g: G, k: keyof Settings[G], label: string, hint?: string) => (
     <label className="flex items-start gap-3 rounded-2xl bg-cal p-3">
       <input type="checkbox" className="mt-1 size-5 accent-[var(--color-balcon)]" checked={!!s[g][k]} onChange={(e) => up(g, k, e.target.checked as Settings[typeof g][typeof k])} />
@@ -73,8 +107,15 @@ export function SettingsForm({ initial, demo, ephemeral }: { initial: Settings; 
         <Card title="Impuesto y propina">
           <div className="grid grid-cols-2 gap-3">
             {text("tax", "label", "Nombre del impuesto")}
-            {text("tax", "rate", "Tarifa (%)", { type: "number", hint: "Restaurantes y bares: 8 % de impuesto al consumo" })}
+            {text("tax", "rate", "Tarifa (%)", { type: "number", hint: "Restaurantes y bares: 8 % de impuesto al consumo. Los productos nuevos toman esta tarifa." })}
           </div>
+          <button
+            className={btn("soft", "sm")}
+            disabled={pending}
+            onClick={() => start(async () => void (report(await applyTaxAction(s.tax.rate)) && router.refresh()))}
+          >
+            Aplicar el {s.tax.rate} % a toda la carta
+          </button>
           {toggle("tips", "enabled", "Propina voluntaria", "El cobro pregunta siempre si el cliente la incluye")}
           {text("tips", "suggestedPct", "Propina sugerida (%)", { type: "number", hint: "La ley no permite sugerir más del 10 %" })}
         </Card>
@@ -125,30 +166,58 @@ export function SettingsForm({ initial, demo, ephemeral }: { initial: Settings; 
         </Card>
         <Card title="Control y factura">
           <div className="grid grid-cols-2 gap-3">
-            {text("alerts", "voidLimit", "Avisar anulaciones desde ($)", { type: "number" })}
+            {text("alerts", "voidLimit", "Anulación grande desde ($)", { type: "number", hint: "Sale señalada en el panel y en el resumen del día" })}
             {text("alerts", "discountLimitPct", "Descuento sin autorización hasta (%)", { type: "number" })}
           </div>
-          {text("alerts", "ownerWhatsapp", "WhatsApp del dueño", { hint: "Para el resumen del día" })}
+          {text("alerts", "ownerWhatsapp", "WhatsApp del dueño", { hint: "El botón del resumen del día abre WhatsApp con este número" })}
+          {text("security", "lockMinutes", "Bloquear la tablet tras estos minutos sin uso", { type: "number", hint: "Pide otra vez el PIN de quien tiene la sesión. 0 la deja sin bloqueo." })}
+          {text("receipt", "footer", "Mensaje al final del recibo")}
+        </Card>
+        <Card title="Resolución de facturación (DIAN)">
           <div className="grid grid-cols-2 gap-3">
-            {text("invoice", "prefix", "Prefijo de factura")}
+            {text("invoice", "prefix", "Prefijo", { hint: "Letras y números, hasta 4. Cada sede usa el suyo." })}
             {text("invoice", "provider", "Proveedor de facturación")}
           </div>
-          {text("invoice", "resolution", "Resolución DIAN")}
-          {text("receipt", "footer", "Mensaje al final del recibo")}
+          {text("invoice", "resolution", "Número de la resolución")}
+          <div className="grid grid-cols-2 gap-3">
+            {text("invoice", "rangeFrom", "Rango desde", { type: "number" })}
+            {text("invoice", "rangeTo", "Rango hasta", { type: "number" })}
+            {text("invoice", "validFrom", "Vigente desde", { type: "date" })}
+            {text("invoice", "validTo", "Vigente hasta", { type: "date" })}
+          </div>
+          {left !== null || daysLeft !== null ? (
+            <p className={cn("rounded-xl px-3 py-2 text-sm font-semibold", (left !== null && left < 200) || (daysLeft !== null && daysLeft < 30) ? "bg-fachada-soft text-[#6b4b00]" : "bg-cal")}>
+              {left !== null ? `Quedan ${Math.max(0, left).toLocaleString("es-CO")} números del rango (la última factura es la ${lastInvoice}). ` : ""}
+              {daysLeft !== null ? (daysLeft < 0 ? "La resolución está vencida: no se puede facturar." : `Vence en ${daysLeft} días.`) : ""} Fuera del rango o de la vigencia, el cobro no deja facturar.
+            </p>
+          ) : (
+            <p className="text-[13px] text-humo">Con el rango y la vigencia cargados, el sistema avisa antes de que se acaben y no factura por fuera de ellos.</p>
+          )}
         </Card>
         <Card title="Domicilios">
           {toggle("channels", "rappi", "Rappi")}
-          {text("channels", "rappiPct", "Comisión de Rappi (%)", { type: "number", hint: "La que tengas pactada: así la rentabilidad muestra lo que de verdad te queda por canal" })}
+          {text("channels", "rappiPct", "Comisión de Rappi (%)", { type: "number", disabled: !isOwner, hint: isOwner ? "La que tengas pactada: así la rentabilidad muestra lo que de verdad te queda por canal" : "La pone el dueño: con ella se comparan las sedes" })}
           {toggle("channels", "didi", "DiDi Food")}
-          {text("channels", "didiPct", "Comisión de DiDi Food (%)", { type: "number" })}
+          {text("channels", "didiPct", "Comisión de DiDi Food (%)", { type: "number", disabled: !isOwner })}
           {toggle("channels", "propio", "Domicilio propio", "Pedidos por WhatsApp o teléfono con tus domiciliarios")}
         </Card>
         <Card title="Costo del equipo">
-          {toggle("labor", "exonerated", "Exonerado de salud, SENA e ICBF", "Artículo 114-1 del Estatuto Tributario. Aplica a la mayoría de las S.A.S.; confírmalo con tu contador.")}
+          {isOwner ? (
+            toggle("labor", "exonerated", "Exonerado de salud, SENA e ICBF", "Artículo 114-1 del Estatuto Tributario. Aplica a la mayoría de las S.A.S.; confírmalo con tu contador.")
+          ) : (
+            <p className="rounded-2xl bg-cal p-3 text-sm">
+              {s.labor.exonerated ? "Exonerado" : "No exonerado"} de salud, SENA e ICBF y riesgo de ARL clase {s.labor.arlClass}: los pone el dueño, porque con ellos se comparan las sedes.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className="text-sm font-semibold text-humo">Riesgo de la ARL</span>
-              <select className="mt-1 h-12 w-full rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto" value={s.labor.arlClass} onChange={(e) => up("labor", "arlClass", Number(e.target.value))}>
+              <select
+                disabled={!isOwner}
+                className="mt-1 h-12 w-full rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto disabled:opacity-50"
+                value={s.labor.arlClass}
+                onChange={(e) => up("labor", "arlClass", Number(e.target.value))}
+              >
                 {["I", "II", "III", "IV", "V"].map((c, i) => (
                   <option key={c} value={i + 1}>
                     Clase {c}
@@ -187,7 +256,7 @@ export function SettingsForm({ initial, demo, ephemeral }: { initial: Settings; 
           <p className="text-[13px] text-humo">Cada turno va desde su hora hasta que empieza el siguiente, y el último hasta el cierre. Rentabilidad compara lo que vende cada turno con lo que cuesta el equipo en esas horas.</p>
         </Card>
       </div>
-      {demo ? (
+      {demo && canReset ? (
         <div className="mt-4 rounded-3xl bg-papel p-5 ring-1 ring-linea">
           <p className="font-bold">Demo</p>
           <p className="text-sm text-humo">{ephemeral ? "Los datos viven en memoria y se reinician solos cuando el servidor descansa." : "Los datos de ejemplo están guardados en este equipo."}</p>
@@ -206,7 +275,7 @@ export function SettingsForm({ initial, demo, ephemeral }: { initial: Settings; 
       ) : null}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-linea bg-cal/95 p-3 backdrop-blur">
         <div className="mx-auto flex max-w-[1400px] justify-end">
-          <button className={btn("primary", "lg", "min-w-56")} disabled={pending} onClick={() => start(async () => void (report(await saveSettingsAction(s)) && router.refresh()))}>
+          <button className={btn("primary", "lg", "min-w-56")} disabled={pending} onClick={save}>
             Guardar ajustes
           </button>
         </div>

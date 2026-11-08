@@ -11,7 +11,8 @@ export interface Settings {
   payments: { efectivo: boolean; nequi: boolean; breb: boolean; tarjeta: boolean; daviplata: boolean; nequiPhone: string; brebKey: string };
   happyHour: HappyHour;
   loyalty: { enabled: boolean; minPurchase: number; goal: number; reward: string; rewardMax: number };
-  invoice: { prefix: string; resolution: string; provider: string; mode: "demo" | "pruebas" | "produccion" };
+  /** Resolución de facturación de la DIAN: prefijo, rango autorizado y vigencia (0 o "" si no se ha cargado) */
+  invoice: { prefix: string; resolution: string; provider: string; mode: "demo" | "pruebas" | "produccion"; rangeFrom: number; rangeTo: number; validFrom: string; validTo: string };
   receipt: { footer: string };
   alerts: { voidLimit: number; discountLimitPct: number; ownerWhatsapp: string };
   qr: { enabled: boolean; requireApproval: boolean; payAtTable: boolean };
@@ -19,6 +20,8 @@ export interface Settings {
   channels: { rappi: boolean; rappiPct: number; didi: boolean; didiPct: number; propio: boolean };
   /** Costo del equipo: carga sobre el salario, alerta de mano de obra y turnos del local */
   labor: { exonerated: boolean; arlClass: number; alertPct: number; turnos: Turno[] };
+  /** Bloqueo por inactividad de las tablets, en minutos (0: apagado) */
+  security: { lockMinutes: number };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -29,12 +32,13 @@ export const DEFAULT_SETTINGS: Settings = {
   payments: { efectivo: true, nequi: true, breb: true, tarjeta: true, daviplata: false, nequiPhone: "", brebKey: "" },
   happyHour: { enabled: false, days: [1, 2, 3, 4, 5], from: "17:00", to: "19:00", label: "Happy hour" },
   loyalty: { enabled: true, minPurchase: 15000, goal: 8, reward: "Una bebida de la casa", rewardMax: 12000 },
-  invoice: { prefix: "FE", resolution: "", provider: "Factus", mode: "demo" },
+  invoice: { prefix: "FE", resolution: "", provider: "Factus", mode: "demo", rangeFrom: 0, rangeTo: 0, validFrom: "", validTo: "" },
   receipt: { footer: "La propina es voluntaria. ¡Gracias por venir!" },
   alerts: { voidLimit: 20000, discountLimitPct: 10, ownerWhatsapp: "" },
   qr: { enabled: true, requireApproval: true, payAtTable: true },
   channels: { rappi: true, rappiPct: 25, didi: false, didiPct: 20, propio: true },
   labor: { exonerated: true, arlClass: 1, alertPct: 35, turnos: [{ name: "Día", from: "06:00" }, { name: "Noche", from: "17:00" }] },
+  security: { lockMinutes: 10 },
 };
 
 type Obj = Record<string, unknown>;
@@ -65,6 +69,10 @@ export function mergeSettings(saved: unknown): Settings {
   s.labor.arlClass = Math.min(5, Math.max(1, Math.round(s.labor.arlClass) || 1));
   s.labor.alertPct = Math.min(60, Math.max(10, Math.round(s.labor.alertPct) || 35));
   s.labor.turnos = cleanTurnos(s.labor.turnos);
+  s.security.lockMinutes = Math.min(120, Math.max(0, Math.round(s.security.lockMinutes) || 0));
+  s.invoice.prefix = s.invoice.prefix.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+  for (const k of ["validFrom", "validTo"] as const) if (!/^\d{4}-\d{2}-\d{2}$/.test(s.invoice[k])) s.invoice[k] = "";
+  for (const k of ["rangeFrom", "rangeTo"] as const) s.invoice[k] = Math.max(0, Math.floor(Number(s.invoice[k]) || 0));
   return s;
 }
 

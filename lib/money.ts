@@ -26,3 +26,15 @@ export function percent(part: number, total: number) {
   if (!total) return 0;
   return Math.round((part / total) * 100);
 }
+
+/**
+ * Lee una cantidad escrita como en Colombia: punto de miles y coma decimal.
+ * "2.400" = 2400, "2,5" = 2,5, "1.234,5" = 1234,5. Un punto que no separa miles ("2.5") se toma como decimal.
+ */
+export function parseQty(text: string) {
+  const s = String(text ?? "").trim().replace(/\s/g, "");
+  if (!s) return NaN;
+  if (s.includes(",")) return Number(s.replace(/\./g, "").replace(",", "."));
+  if (/^\d{1,3}(\.\d{3})+$/.test(s)) return Number(s.replace(/\./g, ""));
+  return Number(s);
+}

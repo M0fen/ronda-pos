@@ -9,7 +9,7 @@ import { Sheet } from "../sheet";
 import { report } from "../toast";
 
 /** El dueño marca la salida de alguien que se fue sin marcarla, con la hora en que salió. */
-export function CloseShift({ shiftId, name, nowHHMM, urgent }: { shiftId: string; name: string; nowHHMM: string; urgent?: boolean }) {
+export function CloseShift({ shiftId, name, nowHHMM, urgent, label = "Marcar salida" }: { shiftId: string; name: string; nowHHMM: string; urgent?: boolean; label?: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [time, setTime] = useState(nowHHMM);
@@ -17,7 +17,7 @@ export function CloseShift({ shiftId, name, nowHHMM, urgent }: { shiftId: string
   return (
     <>
       <button className={cn(btn(urgent ? "warn" : "light", "sm"))} onClick={() => (setTime(nowHHMM), setOpen(true))}>
-        Marcar salida
+        {label}
       </button>
       <Sheet
         open={open}

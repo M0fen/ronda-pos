@@ -5,13 +5,13 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { clockAction, pinLoginAction } from "@/app/entrar/actions";
 import { Avatar } from "@/components/ui";
-import { fmtTime } from "@/lib/format";
+import { fmtTime, fmtWhen } from "@/lib/format";
 import { fmtHours } from "@/lib/core/labor";
 import { cn } from "@/lib/utils";
 import { Keypad } from "./keypad";
 import { toast } from "./toast";
 
-type Person = { id: string; name: string; role: string; roleLabel: string; color: string; hint: string | null; since: string | null };
+type Person = { id: string; name: string; role: string; roleLabel: string; color: string; hint: string | null; since: string | null; pinLen: number };
 type Mode = "entrar" | "turno";
 
 export function PinLogin({ staff }: { staff: Person[] }) {
@@ -32,9 +32,9 @@ export function PinLogin({ staff }: { staff: Person[] }) {
   function press(k: string) {
     if (pending || !who) return;
     if (k === "del") return setPin((p) => p.slice(0, -1));
-    const next = (pin + k).slice(0, 4);
+    const next = (pin + k).slice(0, who.pinLen);
     setPin(next);
-    if (next.length !== 4) return;
+    if (next.length !== who.pinLen) return;
     start(async () => {
       if (mode === "entrar") {
         const result = await pinLoginAction(who.id, next);
@@ -45,7 +45,13 @@ export function PinLogin({ staff }: { staff: Person[] }) {
       const result = await clockAction(who.id, next);
       if (!result.ok || !result.data) return fail(result.ok ? "Algo salió mal" : result.error);
       const d = result.data;
-      toast(d.action === "in" ? `¡Buen turno, ${d.name}! Entrada marcada a las ${fmtTime(d.at)}` : `Salida marcada a las ${fmtTime(d.at)}: trabajaste ${fmtHours(d.minutes)}`);
+      if (d.forgotten) toast(`Tu turno del ${fmtWhen(d.forgotten)} quedó abierto: lo marcamos para que el encargado ponga la hora real. Entrada de hoy a las ${fmtTime(d.at)}`);
+      else
+        toast(
+          d.action === "in"
+            ? `¡Buen turno, ${d.name}! Entrada marcada a las ${fmtTime(d.at)}`
+            : `Salida marcada a las ${fmtTime(d.at)}: trabajaste ${fmtHours(d.minutes)}${d.since ? ` (entraste ${fmtWhen(d.since, new Date(d.at))})` : ""}`,
+        );
       setWho(null);
       setPin("");
       router.refresh();
@@ -88,7 +94,7 @@ export function PinLogin({ staff }: { staff: Person[] }) {
                   <span className="block text-lg font-semibold leading-tight">{s.name}</span>
                   <span className="block text-sm text-humo">
                     {s.roleLabel}
-                    {s.since ? <span className="font-semibold text-puerta-2"> · en turno desde las {fmtTime(s.since)}</span> : null}
+                    {s.since ? <span className="font-semibold text-puerta-2" suppressHydrationWarning> · en turno desde {fmtWhen(s.since)}</span> : null}
                   </span>
                 </span>
                 {s.hint ? <span className="shrink-0 whitespace-nowrap rounded-lg bg-cal px-2 py-1 font-mono text-sm text-humo">PIN {s.hint}</span> : null}
@@ -99,7 +105,7 @@ export function PinLogin({ staff }: { staff: Person[] }) {
       </div>
     );
 
-  const clockText = mode === "turno" ? (who.since ? `Marca tu salida · en turno desde las ${fmtTime(who.since)}` : "Marca tu entrada al turno") : null;
+  const clockText = mode === "turno" ? (who.since ? `Marca tu salida · en turno desde ${fmtWhen(who.since)}` : "Marca tu entrada al turno") : null;
 
   return (
     <div className="rounded-3xl bg-papel p-5 shadow-sm ring-1 ring-linea">
@@ -113,9 +119,13 @@ export function PinLogin({ staff }: { staff: Person[] }) {
           <p className="text-sm text-humo">{who.hint ? `PIN de prueba: ${who.hint}` : who.roleLabel}</p>
         </div>
       </div>
-      {clockText ? <p className="mt-3 rounded-xl bg-puerta-soft px-3 py-2 text-[15px] font-semibold text-puerta-2">{clockText}</p> : null}
-      <div className={`my-6 flex justify-center gap-4 ${shake ? "animate-[shake_0.35s]" : ""}`} aria-label={`${pin.length} de 4 números`}>
-        {[0, 1, 2, 3].map((i) => (
+      {clockText ? (
+        <p className="mt-3 rounded-xl bg-puerta-soft px-3 py-2 text-[15px] font-semibold text-puerta-2" suppressHydrationWarning>
+          {clockText}
+        </p>
+      ) : null}
+      <div className={`my-6 flex justify-center gap-4 ${shake ? "animate-[shake_0.35s]" : ""}`} aria-label={`${pin.length} de ${who.pinLen} números`}>
+        {Array.from({ length: who.pinLen }, (_, i) => i).map((i) => (
           <span key={i} className={`size-4 rounded-full transition ${i < pin.length ? "bg-tinto" : "bg-tinto/12"}`} />
         ))}
       </div>

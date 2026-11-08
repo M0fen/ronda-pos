@@ -64,10 +64,13 @@ async function createPg(url: string): Promise<Db> {
   parsed.searchParams.delete("sslmode");
   parsed.searchParams.delete("channel_binding");
   const local = ["localhost", "127.0.0.1"].includes(parsed.hostname) || process.env.PGSSL === "disable";
+  // El certificado se verifica siempre (Neon sirve tal cual). Supabase usa su propia autoridad:
+  // pon su certificado en PGSSL_CA, o PGSSL=no-verify si no hay cómo
+  const ca = process.env.PGSSL_CA?.replace(/\\n/g, "\n");
   const pool = new pg.Pool({
     connectionString: parsed.toString(),
     max: Number(process.env.PG_POOL_MAX ?? 5),
-    ssl: local ? undefined : { rejectUnauthorized: false },
+    ssl: local ? undefined : { rejectUnauthorized: process.env.PGSSL !== "no-verify", ...(ca ? { ca } : {}) },
     idleTimeoutMillis: 10_000,
   });
 
@@ -165,6 +168,7 @@ async function migrate(db: Db) {
     for (const m of MIGRATIONS) {
       if (m.version <= current) continue;
       for (const statement of splitSql(m.sql)) await tx.query(statement);
+      if (m.run) await m.run(tx);
       await tx.query("insert into schema_version (version) values ($1)", [m.version]);
     }
   });

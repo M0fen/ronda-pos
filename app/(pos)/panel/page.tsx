@@ -7,11 +7,13 @@ import { addDays, bogotaParts, jornadaKey, weekdayOf } from "@/lib/core/time";
 import { fmtDay, fmtShort, fmtTime } from "@/lib/format";
 import { can, requireStaff } from "@/lib/server/auth";
 import { getBusiness } from "@/lib/server/business";
-import { formatStock, ingredientsView } from "@/lib/server/inventory";
+import { formatStock, ingredientsView, needsBuying } from "@/lib/server/inventory";
 import { laborToday } from "@/lib/server/labor";
+import { setupProgress } from "@/lib/server/setup";
 import { dailySales, dayReport, salesOn } from "@/lib/server/reports";
 import { cop } from "@/lib/money";
 import { METHOD_LABEL } from "@/lib/settings";
+import { missingSessionSecret } from "@/lib/session";
 import { ownerSummary } from "@/lib/summary";
 
 export const metadata: Metadata = { title: "Panel" };
@@ -28,23 +30,26 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
   const isToday = day === today;
   const weekday = WEEKDAY[weekdayOf(day)] ?? "";
   const showLabor = isToday && can.manage(staff);
-  const [report, daily, lastWeek, ingredients, biz, labor] = await Promise.all([
-    dayReport(staff.business_id, day),
+  const settings = (await getBusiness(staff.business_id)).settings;
+  const [report, daily, lastWeek, ingredients, biz, labor, steps] = await Promise.all([
+    dayReport(staff.business_id, day, settings.alerts.voidLimit),
     dailySales(staff.business_id, 14),
     // Hoy se compara con el mismo día de la semana pasada a esta misma hora; un día cerrado, completo
     salesOn(staff.business_id, addDays(day, -7), isToday ? new Date(Date.now() - 7 * 86_400_000) : undefined),
     ingredientsView(staff.business_id),
     getBusiness(staff.business_id),
     showLabor ? laborToday(staff.business_id) : null,
+    can.manage(staff) ? setupProgress(staff.business_id) : null,
   ]);
-  const low = ingredients.filter((i) => i.low || (i.daysLeft !== null && i.daysLeft <= 3));
-  const delta = lastWeek ? Math.round(((report.sales - lastWeek) / lastWeek) * 100) : null;
+  const low = ingredients.filter(needsBuying);
+  const delta = lastWeek ? Math.round(((report.net - lastWeek) / lastWeek) * 100) : null;
   const dayLabel = fmtDay(`${day}T12:00:00-05:00`);
   const before = daily.find((d) => d.day === yesterday);
   const text = ownerSummary({
     business: biz.name,
     dayLabel,
-    sales: report.sales,
+    sales: report.net,
+    gross: report.gross,
     checks: report.checks,
     avgTicket: report.avgTicket,
     tips: report.tips,
@@ -55,6 +60,8 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
     methods: report.byMethod,
     voids: report.voids,
     courtesies: report.courtesies,
+    discounts: report.discounts,
+    removed: report.removed,
     lowStock: low.map((i) => i.name),
     open: isToday ? report.openNow : { n: 0, amount: 0 },
   });
@@ -63,6 +70,32 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
 
   return (
     <div className="space-y-4">
+      {staff.role === "owner" && missingSessionSecret() ? (
+        <p className="rounded-2xl bg-cereza-soft px-4 py-3 text-sm font-semibold text-cereza">
+          Falta SESSION_SECRET en el servidor: ponlo en las variables de entorno (32 caracteres al azar) antes de usar el sistema con datos reales.
+        </p>
+      ) : null}
+      {steps ? (
+        <section className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
+          <h2 className="font-bold">Para empezar a vender</h2>
+          <p className="text-sm text-humo">
+            Van {steps.filter((s) => s.done).length} de {steps.length}. Esta lista se va cuando esté lo necesario para vender.
+          </p>
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+            {steps.map((s) => (
+              <li key={s.label}>
+                <Link href={s.href} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 ring-1 ring-linea hover:ring-tinto">
+                  <span className={`flex size-6 shrink-0 items-center justify-center rounded-full text-[13px] font-bold ${s.done ? "bg-puerta text-white" : "ring-2 ring-linea-2"}`} aria-hidden>
+                    {s.done ? "✓" : ""}
+                  </span>
+                  <span className={s.done ? "text-humo line-through" : "font-semibold"}>{s.label}</span>
+                  <ChevronRight size={16} className="ml-auto shrink-0 text-humo" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{dayLabel}</h1>
@@ -89,7 +122,7 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
           <span>
             <span className="block font-bold">Hoy todavía no hay cuentas cerradas</span>
             <span className="text-tinto-2">
-              Ayer vendiste {cop(before.sales)} en {before.checks} cuentas.
+              Ayer vendiste {cop(before.sales)} netos en {before.checks} cuentas.
             </span>
           </span>
           <span className={btn("dark", "sm")}>Ver cómo cerró ayer</span>
@@ -98,18 +131,19 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr]">
         <div className="rounded-3xl bg-tinto p-5 text-cal sm:col-span-2 lg:col-span-1">
-          <p className="text-cal/75">{isToday ? "Ventas de hoy" : `Ventas del ${weekday}`}</p>
-          <p className="mt-1 text-5xl font-bold tracking-tight tnum [font-stretch:105%]">{cop(report.sales)}</p>
+          <p className="text-cal/75">{isToday ? "Ventas netas de hoy" : `Ventas netas del ${weekday}`}</p>
+          <p className="mt-1 text-5xl font-bold tracking-tight tnum [font-stretch:105%]">{cop(report.net)}</p>
+          <p className="text-sm text-cal/70">Sin impuesto ni propina · con impuesto {cop(report.gross)}</p>
           <p className="mt-2 text-[15px] text-cal/80">
             {delta === null ? "Sin datos del mismo día de la semana anterior" : `${delta >= 0 ? "+" : ""}${delta} % frente al ${weekday} anterior${isToday ? " a esta hora" : ""} (${cop(lastWeek)})`}
           </p>
         </div>
         <Stat label="Cuentas" value={String(report.checks)} sub={`${report.guests} personas`} />
-        <Stat label="Ticket promedio" value={cop(report.avgTicket)} sub={`${report.qrShare} % pedido por QR`} />
+        <Stat label="Ticket promedio" value={cop(report.avgTicket)} sub={`Sin impuesto · ${report.qrShare} % pedido por QR`} />
         <Stat
-          label="Propinas"
+          label="Propinas (aparte)"
           value={cop(report.tips)}
-          sub={isToday ? (report.openNow.n ? `${report.openNow.n} cuentas abiertas · ${cop(report.openNow.amount)}` : "Sin cuentas abiertas") : report.sales ? `${Math.round((report.tips / report.sales) * 1000) / 10} % sobre las ventas`.replace(".", ",") : "Sin ventas"}
+          sub={isToday ? (report.openNow.n ? `${report.openNow.n} cuentas abiertas · ${cop(report.openNow.amount)}` : "Sin cuentas abiertas") : report.net ? `${Math.round((report.tips / report.net) * 1000) / 10} % sobre las ventas netas`.replace(".", ",") : "Sin ventas"}
         />
       </section>
 
@@ -122,6 +156,7 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
             </span>
             <span className="text-tinto-2">
               {labor.onShift} en turno ahora · costo de hoy {cop(labor.labor)}
+              {labor.pctWithOpen !== null && labor.openNet ? ` · con lo abierto: ${Math.round(labor.pctWithOpen * 100)} %` : ""}
               {labor.pct !== null && labor.pct * 100 > labor.alertPct ? ` · pasa del ${labor.alertPct} %` : ""}
             </span>
           </span>
@@ -134,12 +169,12 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
           <h2 className="font-bold">Ventas por hora</h2>
-          <p className="mb-4 text-sm text-humo">Por hora de cierre de la cuenta</p>
+          <p className="mb-4 text-sm text-humo">Netas, por hora de cierre de la cuenta</p>
           <ColumnChart label="Ventas por hora" data={report.byHour.map((h) => ({ key: String(h.hour), label: `${h.hour}`, value: h.sales, sub: `de ${h.hour}:00 a ${h.hour}:59` }))} highlight={isToday ? String(bogotaParts().hour) : undefined} />
         </div>
         <div className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
           <h2 className="font-bold">Últimos 14 días</h2>
-          <p className="mb-4 text-sm text-humo">Toca un día para ver su detalle</p>
+          <p className="mb-4 text-sm text-humo">Ventas netas. Toca un día para ver su detalle</p>
           <ColumnChart
             label="Ventas de los últimos 14 días"
             data={daily.map((d) => ({ key: d.day, label: d.day.slice(8), value: d.sales, sub: `${fmtShort(`${d.day}T12:00:00-05:00`)} · ${d.checks} cuentas`, href: d.day === today ? "/panel" : `/panel?dia=${d.day}` }))}
@@ -150,28 +185,51 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
 
       <section className="grid gap-4 lg:grid-cols-3">
         <div className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
-          <h2 className="mb-3 font-bold">{isToday ? "Lo más vendido hoy" : "Lo más vendido"}</h2>
+          <h2 className="font-bold">{isToday ? "Lo más vendido hoy" : "Lo más vendido"}</h2>
+          <p className="mb-3 text-sm text-humo">Sin impuesto</p>
           {report.topProducts.length ? <BarList rows={report.topProducts.map((p) => ({ label: p.name, value: p.revenue, sub: `· ${p.qty}` }))} /> : <Empty title={isToday ? "Todavía no hay ventas hoy" : "Ese día no hubo ventas"} />}
         </div>
         <div className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
-          <h2 className="mb-3 font-bold">Cómo pagaron</h2>
+          <h2 className="font-bold">Cómo pagaron</h2>
+          <p className="mb-3 text-sm text-humo">Con impuesto, sin propina</p>
           {report.byMethod.length ? <BarList rows={report.byMethod.map((m) => ({ label: METHOD_LABEL[m.method] ?? m.method, value: m.amount, sub: `· ${m.n}` }))} /> : <Empty title="Sin pagos" />}
-          <h2 className="mt-6 mb-3 font-bold">Por mesero</h2>
+          <h2 className="mt-6 mb-3 font-bold">Por mesero (netas)</h2>
           {report.byWaiter.length ? <BarList rows={report.byWaiter.map((w) => ({ label: w.name, value: w.sales, sub: `· ${w.checks} cuentas` }))} /> : <Empty title="Sin ventas" />}
         </div>
         <div className="space-y-4">
           <div className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
             <h2 className="flex items-center gap-2 font-bold">
-              <AlertTriangle size={18} className="text-cereza" /> Anulaciones y cortesías
+              <AlertTriangle size={18} className="text-cereza" /> Controles del día
             </h2>
             <p className="mt-1 text-sm text-humo">
-              {report.voids.n} anulaciones por {cop(report.voids.amount)} · cortesías y premios {cop(report.courtesies)}
+              {report.voids.n} anulaciones por {cop(report.voids.amount)}
+              {report.voids.big ? ` (${report.voids.big} de ${cop(settings.alerts.voidLimit)} o más)` : ""} · cortesías y premios {cop(report.courtesies)} · {report.discounts.n} descuentos por {cop(report.discounts.amount)}
             </p>
+            {report.removed.n ? (
+              <div className="mt-3 rounded-2xl bg-cereza-soft px-3 py-2">
+                <p className="text-sm font-bold text-cereza">
+                  {report.removed.n} {report.removed.n === 1 ? "pago quitado" : "pagos quitados"} por {cop(report.removed.amount)}
+                </p>
+                <ul className="mt-1 space-y-0.5 text-[13px]">
+                  {report.removed.items.map((r, i) => (
+                    <li key={i}>
+                      {fmtTime(r.at)} · {METHOD_LABEL[r.method] ?? r.method} {cop(r.amount)} · {r.reason} · {r.staff ?? "—"}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {report.discards.n ? (
+              <p className="mt-2 text-[13px] text-humo">
+                Cuentas descartadas: {report.discards.items.map((d) => `#${d.check} (${d.staff ?? "—"}, ${fmtTime(d.at)})`).join(" · ")}
+              </p>
+            ) : null}
             {report.voids.items.length ? (
               <ul className="mt-3 divide-y divide-linea">
                 {report.voids.items.map((v, i) => (
                   <li key={i} className="py-2 text-[15px]">
                     <span className="font-semibold">{String(v.detail.item ?? "")}</span> · {cop(v.amount)}
+                    {v.amount >= settings.alerts.voidLimit ? <Pill tone="red" className="ml-1">Grande</Pill> : null}
                     <span className="block text-[13px] text-humo">
                       {[fmtTime(v.created_at), String(v.detail.reason ?? ""), `lo anuló ${v.staff ?? "alguien del equipo"}`].filter(Boolean).join(" · ")}
                       {v.detail.authorizedBy && v.detail.authorizedBy !== v.staff ? `, autorizó ${String(v.detail.authorizedBy)}` : ""}
@@ -208,9 +266,9 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
       </section>
 
       <section className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
-        <h2 className="font-bold">Así te llega el resumen por WhatsApp</h2>
+        <h2 className="font-bold">El resumen para WhatsApp</h2>
         <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-2xl bg-[#e7f6e9] p-4 font-sans text-[15px] leading-relaxed text-tinto">{text}</pre>
-        <p className="mt-2 text-sm text-humo">En la versión con WhatsApp Business se envía solo a las 11 p. m.; en la demo lo mandas tú con el botón.</p>
+        <p className="mt-2 text-sm text-humo">El botón abre WhatsApp con el resumen listo para enviar. Que llegue solo cada noche es una integración con WhatsApp Business que se configura aparte.</p>
       </section>
     </div>
   );

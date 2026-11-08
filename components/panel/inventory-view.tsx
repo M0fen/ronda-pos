@@ -1,12 +1,13 @@
 "use client";
 
+import { Pencil, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { stockMoveAction } from "@/app/(pos)/panel/actions";
+import { saveIngredientAction, stockMoveAction } from "@/app/(pos)/panel/actions";
 import { btn, Pill } from "@/components/ui";
 import { fmtQty, fmtShort, fmtTime } from "@/lib/format";
 import type { IngredientView, ProductCost } from "@/lib/server/inventory";
-import { cop } from "@/lib/money";
+import { cop, parseQty } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { Sheet } from "../sheet";
 import { report } from "../toast";
@@ -14,7 +15,17 @@ import { report } from "../toast";
 type Ing = IngredientView & { label: string };
 const KIND_LABEL: Record<string, string> = { compra: "Compra", merma: "Merma", conteo: "Conteo", anulacion: "Anulación", ajuste: "Ajuste" };
 
-export function InventoryView({ ingredients, costs, moves }: { ingredients: Ing[]; costs: ProductCost[]; moves: { id: string; name: string; unit: string; delta: number; reason: string; ref: string; created_at: string; staff: string | null }[] }) {
+export function InventoryView({
+  ingredients,
+  costs,
+  moves,
+  canManage,
+}: {
+  ingredients: Ing[];
+  costs: ProductCost[];
+  moves: { id: string; name: string; unit: string; delta: number; reason: string; ref: string; created_at: string; staff: string | null }[];
+  canManage: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [tab, setTab] = useState<"insumos" | "recetas">("insumos");
@@ -22,10 +33,17 @@ export function InventoryView({ ingredients, costs, moves }: { ingredients: Ing[
   const [qty, setQty] = useState("");
   const [inPacks, setInPacks] = useState(true);
   const [total, setTotal] = useState("");
+  const [confirmBig, setConfirmBig] = useState(false);
+  const [editing, setEditing] = useState<Ing | "new" | null>(null);
   const low = ingredients.filter((i) => i.low).length;
   const value = ingredients.reduce((s, i) => s + i.value, 0);
 
-  const realQty = action ? (parseFloat(qty.replace(",", ".") || "0") * (inPacks && action.ing.pack_size ? action.ing.pack_size : 1)) : 0;
+  // "2.400" es dos mil cuatrocientos (punto de miles), no 2,4
+  const typed = parseQty(qty);
+  const realQty = action && Number.isFinite(typed) ? typed * (inPacks && action.ing.pack_size ? action.ing.pack_size : 1) : 0;
+  // Un conteo o una merma que cambian más de la mitad de lo que hay piden confirmación
+  const big = !!action && action.ing.stock > 0 && (action.kind === "conteo" ? Math.abs(realQty - action.ing.stock) / action.ing.stock > 0.5 : action.kind === "merma" ? realQty / action.ing.stock > 0.5 : false);
+  const open = (ing: Ing, kind: "compra" | "merma" | "conteo") => (setAction({ ing, kind }), setQty(""), setTotal(""), setInPacks(!!ing.pack_size), setConfirmBig(false));
 
   return (
     <div>
@@ -36,23 +54,68 @@ export function InventoryView({ ingredients, costs, moves }: { ingredients: Ing[
             Se descuenta solo con cada pedido, según la receta de cada producto. {low ? `${low} insumos bajo el mínimo.` : ""} Valor en bodega: {cop(value)}.
           </p>
         </div>
-        <div className="flex rounded-2xl bg-tinto/6 p-1">
-          {(
-            [
-              ["insumos", "Insumos"],
-              ["recetas", "Recetas y márgenes"],
-            ] as const
-          ).map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)} className={cn("rounded-xl px-4 py-2 font-semibold", tab === k ? "bg-papel shadow-sm" : "text-tinto-2")}>
-              {l}
+        <div className="flex flex-wrap items-center gap-2">
+          {canManage ? (
+            <button className={btn("primary", "md")} onClick={() => setEditing("new")}>
+              <Plus size={18} /> Nuevo insumo
             </button>
-          ))}
+          ) : null}
+          <div className="flex rounded-2xl bg-tinto/6 p-1">
+            {(
+              [
+                ["insumos", "Insumos"],
+                ["recetas", "Recetas y márgenes"],
+              ] as const
+            ).map(([k, l]) => (
+              <button key={k} onClick={() => setTab(k)} className={cn("rounded-xl px-4 py-2 font-semibold", tab === k ? "bg-papel shadow-sm" : "text-tinto-2")}>
+                {l}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
+      {!ingredients.length ? (
+        <div className="mt-4 rounded-3xl bg-papel p-6 text-center ring-1 ring-linea">
+          <p className="font-bold">Todavía no hay insumos</p>
+          <p className="mt-1 text-humo">Crea lo que compras (café, leche, pan, cerveza) y luego ponle receta a cada producto en Carta: así se descuenta solo con cada venta.</p>
+        </div>
+      ) : null}
 
       {tab === "insumos" ? (
         <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
-          <div className="overflow-x-auto rounded-3xl bg-papel ring-1 ring-linea">
+          {/* En el celular, una tarjeta por insumo con sus acciones a la vista */}
+          <ul className="space-y-2 md:hidden">
+            {ingredients.map((i) => (
+              <li key={i.id} className="rounded-2xl bg-papel p-4 ring-1 ring-linea">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5 font-semibold">
+                      {i.name}
+                      {canManage ? (
+                        <button className="flex size-8 items-center justify-center rounded-lg hover:bg-tinto/6" aria-label={`Editar ${i.name}`} onClick={() => setEditing(i)}>
+                          <Pencil size={14} />
+                        </button>
+                      ) : null}
+                    </span>
+                    <span className="block text-sm tnum">{i.label}</span>
+                  </span>
+                  {i.low ? <Pill tone="red">Bajo</Pill> : i.daysLeft !== null && i.daysLeft <= 3 ? <Pill tone="yellow">{i.daysLeft} días</Pill> : null}
+                </div>
+                <p className="mt-1 text-[13px] text-humo">
+                  mínimo {fmtQty(i.min_stock, i.unit)}
+                  {i.daysLeft !== null ? ` · alcanza ${i.daysLeft} días` : ""}
+                </p>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {(["compra", "merma", "conteo"] as const).map((k) => (
+                    <button key={k} className={btn("soft", "sm", "w-full")} onClick={() => open(i, k)}>
+                      {KIND_LABEL[k]}
+                    </button>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden overflow-x-auto rounded-3xl bg-papel ring-1 ring-linea md:block">
             <table className="w-full min-w-[720px] text-[15px]">
               <thead>
                 <tr className="border-b border-linea text-left text-[13px] text-humo">
@@ -67,7 +130,13 @@ export function InventoryView({ ingredients, costs, moves }: { ingredients: Ing[
                 {ingredients.map((i) => (
                   <tr key={i.id} className="border-b border-linea last:border-0">
                     <td className="px-4 py-2.5">
-                      <span className="font-semibold">{i.name}</span>
+                      {canManage ? (
+                        <button className="flex items-center gap-1.5 text-left font-semibold underline-offset-4 hover:underline" onClick={() => setEditing(i)}>
+                          {i.name} <Pencil size={13} className="text-humo" />
+                        </button>
+                      ) : (
+                        <span className="font-semibold">{i.name}</span>
+                      )}
                       <span className="block text-[13px] text-humo">
                         mínimo {fmtQty(i.min_stock, i.unit)} · {cop(i.cost * (i.pack_size ?? 1))} por {i.pack_label ?? i.unit}
                       </span>
@@ -80,7 +149,7 @@ export function InventoryView({ ingredients, costs, moves }: { ingredients: Ing[
                     <td className="px-2 py-2.5">
                       <div className="flex justify-end gap-1">
                         {(["compra", "merma", "conteo"] as const).map((k) => (
-                          <button key={k} className={btn("soft", "sm")} onClick={() => (setAction({ ing: i, kind: k }), setQty(""), setTotal(""), setInPacks(!!i.pack_size))}>
+                          <button key={k} className={btn("soft", "sm")} onClick={() => open(i, k)}>
                             {KIND_LABEL[k]}
                           </button>
                         ))}
@@ -151,8 +220,9 @@ export function InventoryView({ ingredients, costs, moves }: { ingredients: Ing[
         footer={
           <button
             className={btn("primary", "lg", "w-full")}
-            disabled={pending || !qty}
-            onClick={() =>
+            disabled={pending || !qty || !Number.isFinite(typed)}
+            onClick={() => {
+              if (big && !confirmBig) return setConfirmBig(true);
               start(async () => {
                 if (!action) return;
                 const r = await stockMoveAction({ ingredientId: action.ing.id, kind: action.kind, qty: realQty, totalCost: action.kind === "compra" ? parseInt(total.replace(/\D/g, "") || "0", 10) : undefined });
@@ -160,10 +230,10 @@ export function InventoryView({ ingredients, costs, moves }: { ingredients: Ing[
                   setAction(null);
                   router.refresh();
                 }
-              })
-            }
+              });
+            }}
           >
-            Guardar {qty ? fmtQty(realQty, action?.ing.unit ?? "") : ""}
+            {big && confirmBig ? `Sí, guardar ${fmtQty(realQty, action?.ing.unit ?? "")}` : `Guardar ${qty && Number.isFinite(typed) ? fmtQty(realQty, action?.ing.unit ?? "") : ""}`}
           </button>
         }
       >
@@ -182,8 +252,20 @@ export function InventoryView({ ingredients, costs, moves }: { ingredients: Ing[
             ) : null}
             <label className="mt-3 block">
               <span className="text-sm font-semibold text-humo">{action.kind === "conteo" ? "¿Cuánto hay contado?" : action.kind === "merma" ? "¿Cuánto se perdió?" : "¿Cuánto llegó?"}</span>
-              <input inputMode="decimal" data-autofocus className="mt-1 h-14 w-full rounded-xl border border-linea-2 px-3 text-xl tnum outline-none focus:border-tinto" value={qty} onChange={(e) => setQty(e.target.value.replace(/[^\d.,]/g, ""))} />
+              <input
+                inputMode="decimal"
+                data-autofocus
+                className="mt-1 h-14 w-full rounded-xl border border-linea-2 px-3 text-xl tnum outline-none focus:border-tinto"
+                value={qty}
+                onChange={(e) => (setQty(e.target.value.replace(/[^\d.,]/g, "")), setConfirmBig(false))}
+              />
+              {qty && Number.isFinite(typed) ? <span className="mt-1 block text-sm text-humo">Se guarda: {fmtQty(realQty, action.ing.unit)}</span> : null}
             </label>
+            {big ? (
+              <p className="mt-3 rounded-xl bg-fachada-soft px-3 py-2 text-sm font-semibold text-[#6b4b00]">
+                Cambia más de la mitad de lo que hay ({action.ing.label}). Revisa la cantidad antes de guardar.
+              </p>
+            ) : null}
             {action.kind === "compra" ? (
               <label className="mt-3 block">
                 <span className="text-sm font-semibold text-humo">Valor total de la compra (opcional, actualiza el costo)</span>
@@ -198,6 +280,103 @@ export function InventoryView({ ingredients, costs, moves }: { ingredients: Ing[
           </>
         ) : null}
       </Sheet>
+      {editing ? <IngredientSheet key={editing === "new" ? "new" : editing.id} ing={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={() => (setEditing(null), router.refresh())} /> : null}
     </div>
+  );
+}
+
+const UNIT_NAME: Record<string, string> = { g: "gramos", ml: "mililitros", und: "unidades" };
+
+/** Crear o corregir un insumo: cómo se mide, cómo se compra, cuánto cuesta y el mínimo para avisar. */
+function IngredientSheet({ ing, onClose, onSaved }: { ing: Ing | null; onClose: () => void; onSaved: () => void }) {
+  const [pending, start] = useTransition();
+  const perOf = (unit: string, pack: string) => (parseQty(pack) > 0 ? parseQty(pack) : unit === "und" ? 1 : 1000);
+  const [f, setF] = useState(() => {
+    const unit = ing?.unit ?? "g";
+    const pack = ing?.pack_size ? String(ing.pack_size) : "";
+    return {
+      name: ing?.name ?? "",
+      unit,
+      packLabel: ing?.pack_label ?? "",
+      packSize: pack,
+      price: ing ? String(Math.round(Number(ing.cost) * perOf(unit, pack))) : "",
+      min: ing ? String(ing.min_stock) : "",
+      initial: "",
+    };
+  });
+  const hasPack = parseQty(f.packSize) > 0;
+  const per = perOf(f.unit, f.packSize);
+  const perLabel = hasPack ? `${f.packLabel || "presentación"} de ${fmtQty(per, f.unit)}` : f.unit === "und" ? "unidad" : `${fmtQty(1000, f.unit)}`;
+  const field = "mt-1 h-12 w-full rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto";
+  return (
+    <Sheet
+      open
+      onClose={onClose}
+      title={ing ? `Editar ${ing.name}` : "Nuevo insumo"}
+      footer={
+        <button
+          className={btn("primary", "lg", "w-full")}
+          disabled={pending}
+          onClick={() =>
+            start(async () => {
+              const r = await saveIngredientAction({
+                id: ing?.id ?? null,
+                name: f.name,
+                unit: f.unit,
+                price: parseInt(f.price.replace(/\D/g, "") || "0", 10),
+                perQty: per,
+                minStock: parseQty(f.min) || 0,
+                packSize: hasPack ? parseQty(f.packSize) : null,
+                packLabel: hasPack ? f.packLabel : "",
+                initialStock: ing ? 0 : (parseQty(f.initial) || 0) * (hasPack ? per : 1),
+              });
+              if (report(r)) onSaved();
+            })
+          }
+        >
+          {ing ? "Guardar" : "Crear insumo"}
+        </button>
+      }
+    >
+      <label className="block">
+        <span className="text-sm font-semibold text-humo">Nombre</span>
+        <input className={field} value={f.name} data-autofocus onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Ej. Café en grano, Leche, Pan brioche" />
+      </label>
+      <p className="mt-3 text-sm font-semibold text-humo">Se mide en</p>
+      <div className="mt-1 grid grid-cols-3 gap-2">
+        {(["g", "ml", "und"] as const).map((u) => (
+          <button key={u} onClick={() => setF({ ...f, unit: u })} className={cn("h-12 rounded-xl font-semibold ring-1", f.unit === u ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+            {UNIT_NAME[u]}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className="text-sm font-semibold text-humo">Viene en (opcional)</span>
+          <input className={field} value={f.packLabel} onChange={(e) => setF({ ...f, packLabel: e.target.value })} placeholder="bolsa, botella, caja" />
+        </label>
+        <label className="block">
+          <span className="text-sm font-semibold text-humo">Que trae ({f.unit})</span>
+          <input inputMode="decimal" className={cn(field, "tnum")} value={f.packSize} onChange={(e) => setF({ ...f, packSize: e.target.value.replace(/[^\d.,]/g, "") })} placeholder={f.unit === "und" ? "30" : "1.000"} />
+        </label>
+      </div>
+      <label className="mt-3 block">
+        <span className="text-sm font-semibold text-humo">Precio de compra por {perLabel}</span>
+        <input inputMode="numeric" className={cn(field, "tnum")} value={f.price} onChange={(e) => setF({ ...f, price: e.target.value.replace(/\D/g, "") })} placeholder="$0" />
+        {f.price ? <span className="mt-1 block text-sm text-humo">Sale a {cop(Math.round((parseInt(f.price, 10) / per) * 100) / 100)} por {f.unit === "und" ? "unidad" : f.unit}</span> : null}
+      </label>
+      <label className="mt-3 block">
+        <span className="text-sm font-semibold text-humo">Avisar cuando quede menos de ({f.unit})</span>
+        <input inputMode="decimal" className={cn(field, "tnum")} value={f.min} onChange={(e) => setF({ ...f, min: e.target.value.replace(/[^\d.,]/g, "") })} placeholder="0" />
+      </label>
+      {!ing ? (
+        <label className="mt-3 block">
+          <span className="text-sm font-semibold text-humo">Lo que hay hoy en bodega {hasPack ? `(en ${f.packLabel || "presentaciones"})` : `(${f.unit})`}</span>
+          <input inputMode="decimal" className={cn(field, "tnum")} value={f.initial} onChange={(e) => setF({ ...f, initial: e.target.value.replace(/[^\d.,]/g, "") })} placeholder="0" />
+        </label>
+      ) : (
+        <p className="mt-3 text-sm text-humo">Para cambiar lo que hay en bodega usa Compra, Merma o Conteo: así queda el registro.</p>
+      )}
+    </Sheet>
   );
 }

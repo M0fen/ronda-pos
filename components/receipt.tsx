@@ -29,6 +29,18 @@ export function Receipt({ business, check, invoice, qr, mode }: { business: Busi
             {invoice?.prefix}-{invoice?.number}
           </p>
           <p>{s.invoice.resolution}</p>
+          {s.invoice.rangeTo ? (
+            <p>
+              Rango {s.invoice.prefix}-{s.invoice.rangeFrom} a {s.invoice.prefix}-{s.invoice.rangeTo}
+              {s.invoice.validTo ? ` · vigente hasta ${s.invoice.validTo}` : ""}
+            </p>
+          ) : null}
+          {invoice?.voided_at ? (
+            <p className="mt-2 border border-black px-2 py-1 font-bold">
+              ANULADA CON NOTA CRÉDITO {invoice.credit_note ?? ""}
+              {invoice.void_reason ? <span className="block font-normal">{invoice.void_reason}</span> : null}
+            </p>
+          ) : null}
         </div>
       )}
       <div className="my-3 border-t border-dashed border-black/50" />

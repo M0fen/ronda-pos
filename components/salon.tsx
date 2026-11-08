@@ -10,7 +10,7 @@ import type { CheckSummary, RequestView, TableView } from "@/lib/server/checks";
 import { cop } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { Sheet } from "./sheet";
-import { report, toast } from "./toast";
+import { report } from "./toast";
 
 type Floor = {
   zones: { id: string; name: string }[];
@@ -126,7 +126,8 @@ export function Salon({ floor }: { floor: Floor }) {
                         {c.minutesOpen} min · {c.units} productos
                       </span>
                     </span>
-                    {c.ready ? <Pill tone="green">Listo</Pill> : null}
+                    {/* "Listo" solo cuando todo está listo; mientras tanto, cuántos van */}
+                    {c.ready && !c.inStation ? <Pill tone="green">Listo</Pill> : c.ready ? <Pill tone="yellow">{`${c.ready} de ${c.ready + c.inStation} listos`}</Pill> : null}
                     <Money value={c.total} className="font-semibold" />
                     <ChevronRight size={18} className="text-humo" />
                   </Link>
@@ -269,8 +270,8 @@ function Requests({ requests, checks }: { requests: RequestView[]; checks: Check
           const where = r.table_name ? `Mesa ${r.table_name}` : "Una mesa";
           const check = checks.find((c) => c.id === r.check_id || (r.table_id && c.table_id === r.table_id));
           return (
-            <li key={r.id} className="flex flex-wrap items-center gap-3 rounded-2xl bg-white/8 px-3.5 py-3">
-              <div className="min-w-[12rem] flex-1">
+            <li key={r.id} className="flex min-w-0 flex-wrap items-center gap-3 rounded-2xl bg-white/8 px-3.5 py-3">
+              <div className="min-w-0 flex-1 basis-48">
                 {r.kind === "order" ? (
                   <>
                     <p className="font-semibold">
@@ -286,7 +287,8 @@ function Requests({ requests, checks }: { requests: RequestView[]; checks: Check
                 ) : (
                   <>
                     <p className="font-semibold">
-                      {where} pagó {r.payload.method === "breb" ? "con Bre-B" : r.payload.method === "nequi" ? "con Nequi" : ""} {cop(r.payload.amount ?? 0)}
+                      {where} pagó {r.payload.method === "breb" ? "con Bre-B" : r.payload.method === "nequi" ? "con Nequi" : ""} {cop((r.payload.amount ?? 0) + (r.payload.tip ?? 0))}
+                      {r.payload.tip ? <span className="font-normal text-cal/75"> (con {cop(r.payload.tip)} de propina)</span> : null}
                     </p>
                     <p className="text-sm text-cal/75">Referencia {r.payload.reference}: confirma que llegó antes de aceptarlo</p>
                   </>
@@ -305,19 +307,20 @@ function Requests({ requests, checks }: { requests: RequestView[]; checks: Check
                 <button className={btn("warn", "sm")} disabled={pending} onClick={() => run(() => approveRequestAction(r.id), "Atendido")}>
                   Voy para allá
                 </button>
-              ) : (
+              ) : check ? (
                 <button
-                  className={btn("warn", "sm")}
+                  className={btn("warn", "sm", "max-sm:w-full")}
                   onClick={() => {
-                    if (!check)
-                      return toast("Esa mesa no tiene una cuenta abierta", {
-                        tone: "error",
-                      });
                     if (r.kind === "bill") start(async () => void (await approveRequestAction(r.id)));
                     router.push(`/cuenta/${check.id}/cobro`);
                   }}
                 >
                   {r.kind === "bill" ? "Ir a cobrar" : "Revisar pago"}
+                </button>
+              ) : (
+                // Sin cuenta abierta no hay nada que cobrar: el aviso se puede quitar
+                <button className={btn("light", "sm", "max-sm:w-full")} disabled={pending} onClick={() => run(() => rejectRequestAction(r.id), "Aviso quitado")}>
+                  <X size={16} /> Quitar aviso
                 </button>
               )}
             </li>

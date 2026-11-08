@@ -17,6 +17,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
     ...(manage
       ? [
           { href: "/panel/carta", label: "Carta" },
+          { href: "/panel/mesas", label: "Mesas" },
           { href: "/panel/equipo", label: "Equipo" },
           { href: "/panel/qr", label: "QR de mesas" },
           { href: "/panel/ajustes", label: "Ajustes" },

@@ -6,7 +6,7 @@
  * y los enlaces sirvan entre dispositivos. Se importa desde scripts: no usa server-only.
  */
 import { createHash } from "node:crypto";
-import type { Db } from "./db-core";
+import type { Db, Tx } from "./db-core";
 import { packingList } from "./core/delivery";
 import { holidayName } from "./core/labor";
 import { checkTotals, suggestedTip } from "./core/pricing";
@@ -62,10 +62,12 @@ export const DEMO_SETTINGS: Settings = {
   theme: { primary: "#171310", accent: "#FFC20E", whiteLabel: true },
   payments: { ...DEFAULT_SETTINGS.payments, nequiPhone: "300 000 0000", brebKey: "@demo-srpatata" },
   loyalty: { enabled: true, minPurchase: 30000, goal: 8, reward: "Una bebida de la casa", rewardMax: 7000 },
-  invoice: { prefix: "SPCI", resolution: "Resolución DIAN de prueba (demo)", provider: "Factus", mode: "demo" },
+  invoice: { prefix: "SPCI", resolution: "Resolución DIAN de prueba (demo)", provider: "Factus", mode: "demo", rangeFrom: 1001, rangeTo: 200000, validFrom: "2026-01-01", validTo: "2028-12-31" },
   receipt: { footer: "Maestría patatera. La propina es voluntaria. ¡Gracias por venir!" },
   channels: { rappi: true, rappiPct: 25, didi: false, didiPct: 20, propio: true },
   labor: { exonerated: true, arlClass: 1, alertPct: 35, turnos: [{ name: "Almuerzo", from: "11:00" }, { name: "Noche", from: "17:00" }] },
+  // La demo se bloquea tarde: no interrumpe una presentación, pero se ve que existe
+  security: { lockMinutes: 20 },
 };
 
 const MIN_WAGE = 1_750_905;
@@ -866,11 +868,11 @@ function sedeSettings(s: Sede): Settings {
 }
 
 /** Catálogo, salón, equipo e insumos de cada sede. No depende de la hora. */
-export async function seedBusiness(db: Db) {
+export async function seedBusiness(db: Tx) {
   for (const [order, s] of DEMO_SEDES.entries()) await seedSede(db, s, order);
 }
 
-async function seedSede(db: Db, s: Sede, order: number) {
+async function seedSede(db: Tx, s: Sede, order: number) {
   const biz = bizOf(s);
   const id = (kind: string, key: string) => stableId(keyOf(s, `${kind}:${key}`));
   const settings = sedeSettings(s);
@@ -1078,11 +1080,11 @@ const MAIN_MOVES: [number, string, string, number, string, string, string][] = [
 ];
 
 /** Dos semanas de ventas de cada sede, el servicio de hoy hasta el comienzo de esta hora y lo que está pasando ahora. */
-export async function seedActivity(db: Db, now = new Date()) {
+export async function seedActivity(db: Tx, now = new Date()) {
   for (const s of DEMO_SEDES) await seedSedeActivity(db, s, now);
 }
 
-async function seedSedeActivity(db: Db, s: Sede, now: Date) {
+async function seedSedeActivity(db: Tx, s: Sede, now: Date) {
   const biz = bizOf(s);
   const id = (kind: string, key: string) => stableId(keyOf(s, `${kind}:${key}`));
   const sk = (key: string) => stableId(keyOf(s, key));
@@ -1408,7 +1410,7 @@ function seedShifts(s: Sede, now: Date) {
 }
 
 /** Lo que está pasando ahora: mesas abiertas, tiquetes en barra y cocina, mostrador, domicilios y pedidos por QR. Devuelve el próximo número de cuenta. */
-async function seedLiveService(db: Db, s: Sede, now: Date, firstNumber: number, names: Map<string, string>) {
+async function seedLiveService(db: Tx, s: Sede, now: Date, firstNumber: number, names: Map<string, string>) {
   const biz = bizOf(s);
   const id = (kind: string, key: string) => stableId(keyOf(s, `${kind}:${key}`));
   const ago = (m: number) => new Date(now.getTime() - m * 60_000).toISOString();

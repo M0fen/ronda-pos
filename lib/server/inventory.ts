@@ -46,6 +46,9 @@ export async function ingredientsView(bizId: string): Promise<IngredientView[]> 
   });
 }
 
+/** Un solo criterio de "por comprar" en todo el sistema: bajo el mínimo o con 3 días o menos. */
+export const needsBuying = (i: Pick<IngredientView, "low" | "daysLeft">) => i.low || (i.daysLeft !== null && i.daysLeft <= 3);
+
 /** "6.750 ml (9 botellas)" */
 export function formatStock(i: Pick<IngredientView, "stock" | "unit" | "pack_size" | "pack_label">) {
   const n = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 1 }).format(i.stock);
@@ -93,9 +96,13 @@ export async function productCosts(bizId: string): Promise<ProductCost[]> {
 }
 
 export async function stockMove(staff: Staff, input: { ingredientId: string; kind: "compra" | "merma" | "conteo"; qty: number; totalCost?: number; note?: string }) {
+  // Solo compra, merma y conteo: las ventas y anulaciones las mueve el sistema, nadie las escribe a mano
+  if (!["compra", "merma", "conteo"].includes(input.kind)) throw new UserError("Ese movimiento no existe");
   if (input.kind !== "merma" && !can.panel(staff)) throw new UserError("Pide al encargado que registre compras y conteos");
   const qty = Number(input.qty);
-  if (!Number.isFinite(qty) || qty < 0 || (input.kind !== "conteo" && qty === 0)) throw new UserError("Escribe una cantidad válida");
+  if (!Number.isFinite(qty) || qty < 0 || qty > 10_000_000 || (input.kind !== "conteo" && qty === 0)) throw new UserError("Escribe una cantidad válida");
+  const totalCost = Number(input.totalCost ?? 0);
+  if (!Number.isFinite(totalCost) || totalCost < 0 || totalCost > 100_000_000) throw new UserError("Revisa el valor de la compra");
   const db = await getDb();
   await db.tx(async (tx) => {
     const ing = await tx.one<{ id: string; name: string; stock: number; cost: number }>("select id, name, stock, cost from ingredients where id = $1 and business_id = $2 for update", [
@@ -108,8 +115,8 @@ export async function stockMove(staff: Staff, input: { ingredientId: string; kin
     if (input.kind === "compra") {
       delta = qty;
       // Costo promedio ponderado
-      if (input.totalCost && input.totalCost > 0) {
-        const newCost = (Math.max(0, stock) * Number(ing.cost) + input.totalCost) / (Math.max(0, stock) + qty);
+      if (totalCost > 0) {
+        const newCost = (Math.max(0, stock) * Number(ing.cost) + totalCost) / (Math.max(0, stock) + qty);
         await tx.query("update ingredients set cost = $2 where id = $1", [ing.id, newCost]);
       }
     } else if (input.kind === "merma") {

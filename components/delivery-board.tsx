@@ -4,22 +4,53 @@ import { Bike, Check, ChefHat, Clock, MapPin, PackageCheck, Plus, ShoppingBag } 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { createDeliveryAction, dispatchDeliveryAction, packDeliveryAction, sendRoundAction } from "@/app/(pos)/actions";
+import { cancelDeliveryAction, createDeliveryAction, dispatchDeliveryAction, packDeliveryAction, sendRoundAction } from "@/app/(pos)/actions";
 import { btn, Empty, Money } from "@/components/ui";
 import { STAGES, type DeliveryStage } from "@/lib/core/delivery";
 import type { DeliveryCard } from "@/lib/server/delivery";
 import { CHANNEL_COLOR } from "@/lib/settings";
 import { cn } from "@/lib/utils";
+import { AuthSheet, type AuthLevel, type AuthRequest, type Authorizer } from "./auth-sheet";
 import { Sheet } from "./sheet";
 import { report } from "./toast";
+
+type Result = { ok: boolean; error?: string; message?: string; fields?: Record<string, string> };
+type Auth = { id: string; pin: string };
 
 const ICON: Record<DeliveryStage, typeof Clock> = { nuevo: ShoppingBag, cocina: ChefHat, empacar: PackageCheck, listo: Bike };
 /** En el tablero todo es domicilio: basta el canal */
 const LABEL: Record<string, string> = { rappi: "Rappi", didi: "DiDi Food", propio: "Propio" };
 
-export function DeliveryBoard({ cards, channels, canCharge }: { cards: DeliveryCard[]; channels: { key: string; label: string }[]; canCharge: boolean }) {
+export function DeliveryBoard({
+  cards,
+  channels,
+  canCharge,
+  authorizers,
+  meId,
+}: {
+  cards: DeliveryCard[];
+  channels: { key: string; label: string }[];
+  canCharge: boolean;
+  authorizers: Authorizer[];
+  meId: string;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [cancel, setCancel] = useState<DeliveryCard | null>(null);
+  const [reason, setReason] = useState("");
+  const [auth, setAuth] = useState<(AuthRequest & { run: (a: Auth) => Promise<Result> }) | null>(null);
+  function cancelOrder() {
+    const c = cancel!;
+    const action = (a?: Auth) => cancelDeliveryAction(c.id, { reason, auth: a });
+    start(async () => {
+      const r = await action();
+      if (!r.ok && r.fields?.auth) return setAuth({ label: `Cancelar el pedido ${c.code} de ${c.customer}`, level: r.fields.auth as AuthLevel, run: action });
+      if (report(r)) {
+        setCancel(null);
+        router.refresh();
+      }
+    });
+  }
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ channel: channels[0]?.key ?? "propio", customer: "", code: "", rider: "", phone: "", address: "", notes: "" });
   const [checked, setChecked] = useState<Record<string, string[]>>({});
@@ -58,7 +89,8 @@ export function DeliveryBoard({ cards, channels, canCharge }: { cards: DeliveryC
               <div className="space-y-3">
                 {list.length ? (
                   list.map((c) => {
-                    const done = checked[c.id] ?? [];
+                    // Si la bolsa se reabrió por un cambio, lo marcado que ya no está en la lista no cuenta
+                    const done = (checked[c.id] ?? []).filter((l) => c.checklist.includes(l));
                     return (
                       <article key={c.id} className="overflow-hidden rounded-2xl bg-papel ring-1 ring-linea">
                         <div className="h-1.5" style={{ background: CHANNEL_COLOR[c.channel] ?? "#6b6660" }} />
@@ -142,7 +174,14 @@ export function DeliveryBoard({ cards, channels, canCharge }: { cards: DeliveryC
                           ) : null}
 
                           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                            <Money value={c.total} className="font-bold" />
+                            <span className="flex items-center gap-2">
+                              <Money value={c.total} className="font-bold" />
+                              {c.stage !== "nuevo" ? (
+                                <Link href={`/cuenta/${c.id}`} className="text-sm font-semibold text-balcon underline-offset-4 hover:underline">
+                                  Cuenta
+                                </Link>
+                              ) : null}
+                            </span>
                             {c.stage === "nuevo" ? (
                               c.count ? (
                                 <span className="flex gap-2">
@@ -180,6 +219,9 @@ export function DeliveryBoard({ cards, channels, canCharge }: { cards: DeliveryC
                               </Link>
                             )}
                           </div>
+                          <button className="mt-2 text-sm font-semibold text-cereza underline-offset-4 hover:underline" onClick={() => (setReason(""), setCancel(c))}>
+                            Cancelar pedido
+                          </button>
                         </div>
                       </article>
                     );
@@ -192,6 +234,44 @@ export function DeliveryBoard({ cards, channels, canCharge }: { cards: DeliveryC
           );
         })}
       </div>
+
+      <Sheet
+        open={!!cancel}
+        onClose={() => setCancel(null)}
+        title={`Cancelar ${cancel?.code ?? ""}`}
+        footer={
+          <button className={btn("danger", "lg", "w-full")} disabled={pending || reason.trim().length < 3} onClick={cancelOrder}>
+            Cancelar el pedido
+          </button>
+        }
+      >
+        <p className="text-[15px]">Se anula todo con el motivo. Lo que apenas estaba en cocina vuelve al inventario; lo ya preparado cuenta como merma.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {["La plataforma lo canceló", "El cliente lo canceló", "No hay domiciliario"].map((r) => (
+            <button key={r} type="button" onClick={() => setReason(r)} className={cn("rounded-full px-3.5 py-2 text-sm font-semibold ring-1", reason === r ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+              {r}
+            </button>
+          ))}
+        </div>
+        <input className="mt-3 h-12 w-full rounded-xl border border-linea-2 px-3 outline-none focus:border-tinto" placeholder="Otro motivo" value={reason} onChange={(e) => setReason(e.target.value)} />
+      </Sheet>
+      <AuthSheet
+        request={auth}
+        authorizers={authorizers}
+        meId={meId}
+        pending={pending}
+        onClose={() => setAuth(null)}
+        onAuth={(credentials) => {
+          const a = auth!;
+          start(async () => {
+            if (report(await a.run(credentials), "Pedido cancelado")) {
+              setAuth(null);
+              setCancel(null);
+              router.refresh();
+            }
+          });
+        }}
+      />
 
       <Sheet
         open={creating}

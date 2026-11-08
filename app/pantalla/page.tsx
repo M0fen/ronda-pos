@@ -45,7 +45,7 @@ export default async function TurnosPage({ searchParams }: { searchParams: Promi
           </ul>
         </section>
       </div>
-      <AutoRefresh />
+      <AutoRefresh bizId={biz.id} />
     </main>
   );
 }

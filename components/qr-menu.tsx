@@ -80,7 +80,12 @@ export function QrMenu({
       if (r.ok) {
         setCart([]);
         setSent(true);
-      } else toast(r.error, { tone: "error" });
+      } else {
+        // Si algo salió de la carta o se agotó, se quita del pedido para que el cliente vuelva a enviarlo
+        const missing = r.fields?.missing;
+        if (missing) setCart((c) => c.filter((l) => l.product.id !== missing));
+        toast(r.error, { tone: "error" });
+      }
     });
   }
 
@@ -94,7 +99,8 @@ export function QrMenu({
   const products = menu.products.filter((p) => p.categoryId === cat);
 
   return (
-    <div className={cn("mx-auto min-h-dvh max-w-lg bg-cal", tab === "carta" && count ? "pb-40" : "pb-24")}>
+    // Los avisos salen encima de la barra de abajo, sin taparla
+    <div className={cn("mx-auto min-h-dvh max-w-lg bg-cal [--toast-bottom:9.5rem]", tab === "carta" && count ? "pb-40" : "pb-24")}>
       <header className="px-5 pt-6 pb-5 text-white" style={{ background: theme.primary }}>
         <p className="text-sm font-semibold text-white/80">Mesa {table}</p>
         <h1 className="mt-0.5 text-3xl font-extrabold leading-tight [font-stretch:112%]">{business.name}</h1>
@@ -150,9 +156,9 @@ export function QrMenu({
           {sent ? (
             <div className="rounded-3xl bg-puerta-soft p-5 text-puerta-2">
               <p className="flex items-center gap-2 text-lg font-bold">
-                <Check size={20} /> Tu pedido llegó
+                <Check size={20} /> Recibimos tu pedido
               </p>
-              <p className="mt-1 text-[15px]">{config.qr.requireApproval ? "El mesero lo confirma en un momento y pasa directo a la barra." : "Ya está en la barra."}</p>
+              <p className="mt-1 text-[15px]">{config.qr.requireApproval ? "El mesero lo confirma en un momento y pasa directo a barra y cocina." : "Ya está en barra y cocina."}</p>
             </div>
           ) : null}
           {cart.length ? (
@@ -254,15 +260,22 @@ function Bill({
   theme: { primary: string };
 }) {
   const [people, setPeople] = useState(1);
-  const [tip, setTip] = useState(true);
+  const [part, setPart] = useState(0);
+  // La propina es voluntaria: arranca sin elegir y hay que decir con o sin antes de pagar (Ley 1935 de 2018)
+  const [tip, setTip] = useState<"si" | "no" | null>(null);
   const [method, setMethod] = useState<"breb" | "nequi">(config.breb ? "breb" : "nequi");
   const [paying, setPaying] = useState(false);
   const [reference, setReference] = useState("");
   const [pending, start] = useTransition();
   const pendingSum = check?.pending.reduce((s, p) => s + p.amount, 0) ?? 0;
   const left = Math.max(0, (check?.due ?? 0) - pendingSum);
-  const share = useMemo(() => splitEqual(left, people)[0] ?? 0, [left, people]);
-  const tipShare = tip && config.tips.enabled ? suggestedTip(share, config.tips.suggestedPct) : 0;
+  // Las partes se calculan sobre el total de la cuenta, no sobre lo que falta: así cada uno paga lo mismo
+  const shares = useMemo(() => splitEqual(check?.totals.total ?? 0, people), [check?.totals.total, people]);
+  const label = (i: number) => `Parte ${i + 1} de ${people}`;
+  const taken = new Map((check?.parts ?? []).map((p) => [p.part, p.status]));
+  const share = people > 1 ? Math.min(left, shares[part] ?? 0) : left;
+  const tipShare = tip === "si" && config.tips.enabled ? suggestedTip(share, config.tips.suggestedPct) : 0;
+  const needTip = config.tips.enabled && tip === null;
 
   if (!check)
     return (
@@ -303,25 +316,52 @@ function Bill({
             <span className="text-sm font-semibold text-humo">Dividir entre</span>
             <div className="flex gap-1.5">
               {[1, 2, 3, 4, 5, 6].map((n) => (
-                <button key={n} onClick={() => setPeople(n)} className={cn("size-10 rounded-xl font-bold ring-1 tnum", people === n ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+                <button key={n} onClick={() => (setPeople(n), setPart(0))} className={cn("size-10 rounded-xl font-bold ring-1 tnum", people === n ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
                   {n}
                 </button>
               ))}
             </div>
           </div>
-          {config.tips.enabled ? (
-            <label className="mt-3 flex items-center justify-between gap-3 rounded-xl bg-cal px-3 py-2.5">
-              <span className="text-[15px]">
-                Propina voluntaria del {config.tips.suggestedPct} % <span className="text-humo tnum">({cop(tipShare || suggestedTip(share, config.tips.suggestedPct))})</span>
-              </span>
-              <input type="checkbox" className="size-5" checked={tip} onChange={(e) => setTip(e.target.checked)} />
-            </label>
+          {people > 1 ? (
+            <ul className="mt-3 grid grid-cols-2 gap-2">
+              {shares.map((amount, i) => {
+                const status = taken.get(label(i));
+                return (
+                  <li key={i}>
+                    <button
+                      disabled={!!status}
+                      onClick={() => setPart(i)}
+                      className={cn("flex w-full flex-col rounded-xl px-3 py-2 text-left ring-1", part === i && !status ? "ring-2 ring-tinto" : "ring-linea-2", status && "bg-cal opacity-70")}
+                    >
+                      <span className="text-sm font-semibold">{`${i + 1}/${people}`}</span>
+                      <span className="tnum">{cop(amount)}</span>
+                      {status ? <span className="text-[12px] font-semibold text-puerta-2">{status === "ok" ? "Pagada" : "Por confirmar"}</span> : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           ) : null}
-          <p className="mt-4 text-center text-sm text-humo">{people > 1 ? "Tu parte" : "Total a pagar"}</p>
+          {config.tips.enabled ? (
+            <div className="mt-3">
+              <p className="text-[15px]">
+                ¿Incluyes la propina voluntaria del {config.tips.suggestedPct} %? <span className="text-humo tnum">({cop(suggestedTip(share, config.tips.suggestedPct))})</span>
+              </p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button onClick={() => setTip("si")} className={cn("h-11 rounded-xl font-semibold ring-1", tip === "si" ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+                  Con propina
+                </button>
+                <button onClick={() => setTip("no")} className={cn("h-11 rounded-xl font-semibold ring-1", tip === "no" ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+                  Sin propina
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <p className="mt-4 text-center text-sm text-humo">{people > 1 ? `Parte ${part + 1} de ${people}` : "Total a pagar"}</p>
           <p className="text-center text-4xl font-bold tnum">{cop(share + tipShare)}</p>
           {!paying ? (
-            <button className={btn("dark", "xl", "mt-4 w-full")} onClick={() => setPaying(true)}>
-              Pagar {people > 1 ? "mi parte" : "la cuenta"}
+            <button className={btn("dark", "xl", "mt-4 w-full")} disabled={needTip || share <= 0 || !!taken.get(label(part))} onClick={() => setPaying(true)}>
+              {needTip ? "Elige con o sin propina" : `Pagar ${people > 1 ? "esta parte" : "la cuenta"}`}
             </button>
           ) : (
             <div className="mt-4">
@@ -359,7 +399,7 @@ function Bill({
                 disabled={pending || reference.trim().length < 4}
                 onClick={() =>
                   start(async () => {
-                    const r = await qrPayAction(token, { method, amount: share, tip: tipShare, reference, part: people > 1 ? `Parte de 1/${people}` : "" });
+                    const r = await qrPayAction(token, { method, amount: share, tip: tipShare, reference, part: people > 1 ? label(part) : "" });
                     if (r.ok) {
                       toast("Listo. El mesero confirma tu pago en un momento.");
                       setPaying(false);
@@ -374,6 +414,9 @@ function Bill({
             </div>
           )}
         </div>
+      ) : left === 0 && pendingSum > 0 ? (
+        // Pagó, pero nadie lo ha confirmado todavía: no se dice "pagada" hasta que la caja lo vea
+        <p className="mt-4 rounded-2xl bg-fachada-soft px-4 py-3 font-semibold text-[#6b4b00]">Pago por confirmar: el mesero lo revisa en un momento.</p>
       ) : left === 0 && check.totals.total > 0 ? (
         <p className="mt-4 rounded-2xl bg-puerta-soft px-4 py-3 font-semibold text-puerta-2">Tu cuenta está pagada. ¡Gracias!</p>
       ) : null}

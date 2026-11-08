@@ -2,12 +2,12 @@ import "server-only";
 import { deliveryStage, packingList, type DeliveryStage } from "../core/delivery";
 import { minutesSince } from "../core/time";
 import { normalizePhone } from "../utils";
-import { can, type Staff } from "./auth";
+import { can, requireAuth, verifyAuthorizer, type AuthInput, type Staff } from "./auth";
 import { audit, bump, getBusiness, nextNumber } from "./business";
-import { checkLabel, loadCheck, type Delivery, type Mod } from "./checks";
+import { checkLabel, loadCheck, moveStock, totalsFor, type CheckItem, type Delivery, type Mod } from "./checks";
 import { getDb } from "./db";
 import { UserError } from "./errors";
-import { closeCheck, currentCashSession } from "./payments";
+import { closeCheckTx, currentCashSession } from "./payments";
 
 export interface DeliveryCard {
   id: string;
@@ -34,13 +34,13 @@ export interface DeliveryCard {
 /** Tablero de domicilios: pedidos de Rappi, DiDi y propios, de que entran a que salen. */
 export async function deliveryBoard(bizId: string, now = new Date()): Promise<DeliveryCard[]> {
   const db = await getDb();
-  const checks = await db.query<{ id: string; number: number; name: string; channel: string; delivery: Delivery | null; opened_at: string }>(
-    "select id, number, name, channel, delivery, opened_at from checks where business_id = $1 and kind = 'domicilio' and status in ('open','bill') order by opened_at",
+  const checks = await db.query<{ id: string; number: number; name: string; channel: string; delivery: Delivery | null; opened_at: string; discount_pct: number }>(
+    "select id, number, name, channel, delivery, opened_at, discount_pct from checks where business_id = $1 and kind = 'domicilio' and status in ('open','bill') order by opened_at",
     [bizId],
   );
   if (!checks.length) return [];
-  const items = await db.query<{ check_id: string; name: string; qty: number; modifiers: Mod[]; status: string; note: string; unit_price: number }>(
-    "select check_id, name, qty, modifiers, status, note, unit_price from check_items where check_id = any($1::uuid[]) order by created_at",
+  const items = await db.query<{ check_id: string; name: string; qty: number; modifiers: Mod[]; status: CheckItem["status"]; note: string; unit_price: number; tax_rate: number; courtesy: boolean }>(
+    "select check_id, name, qty, modifiers, status, note, unit_price, tax_rate, courtesy from check_items where check_id = any($1::uuid[]) order by created_at",
     [checks.map((c) => c.id)],
   );
   return checks.map((c) => {
@@ -61,7 +61,8 @@ export async function deliveryBoard(bizId: string, now = new Date()): Promise<De
       minutes: minutesSince(c.opened_at, now),
       riderIn: d.riderAt ? Math.round((Date.parse(d.riderAt) - now.getTime()) / 60_000) : null,
       items: live.map(({ name, qty, modifiers, status, note }) => ({ name, qty, modifiers, status, note })),
-      total: live.reduce((s, i) => s + (i.unit_price + i.modifiers.reduce((a, m) => a + (m.price ?? 0), 0)) * i.qty, 0),
+      // Con descuentos y cortesías: lo mismo que se cobra
+      total: totalsFor(mine, c.discount_pct).total,
       ready: live.filter((i) => i.status === "ready" || i.status === "delivered").length,
       count: live.length,
       checklist: packingList(live),
@@ -119,24 +120,64 @@ export async function packDelivery(staff: Staff, checkId: string, checked: strin
   });
 }
 
-/** Entrega al domiciliario de la plataforma: queda pagado en la plataforma y sale la factura. */
+/** Entrega al domiciliario de la plataforma: el pago en la plataforma y la factura salen juntos, en una sola transacción. */
 export async function dispatchDelivery(staff: Staff, checkId: string) {
   if (!can.charge(staff)) throw new UserError("Tu usuario no puede despachar domicilios");
+  const biz = await getBusiness(staff.business_id);
   const db = await getDb();
-  await db.tx(async (tx) => {
+  return db.tx(async (tx) => {
+    await tx.one("select id from checks where id = $1 and business_id = $2 for update", [checkId, staff.business_id]);
     const check = await loadCheck(staff.business_id, checkId, tx);
     if (!check || check.kind !== "domicilio") throw new UserError("Domicilio no encontrado");
-    if (!check.delivery?.packedAt) throw new UserError("Empaca y revisa el pedido antes de entregarlo");
+    if (check.status === "paid" || check.status === "void") throw new UserError("Este domicilio ya salió");
     if (check.channel === "propio") throw new UserError("Cobra el domicilio propio en el cobro de la cuenta");
+    if (!check.delivery?.packedAt) throw new UserError("Empaca y revisa el pedido antes de entregarlo");
+    if (check.items.some((i) => i.status === "draft" || i.status === "sent")) throw new UserError("Hay productos que no están listos: la bolsa se revisa otra vez");
     // Queda en la caja del día como pagado en la plataforma: no entra al cajón, pero sí al cuadre de ventas
     const session = await currentCashSession(staff.business_id, tx);
+    if (!session) throw new UserError("Abre la caja para despachar: el pago de la plataforma queda en el cierre del día");
     if (check.due > 0)
       await tx.query(
         "insert into payments (business_id, check_id, method, amount, tip, reference, created_by, cash_session_id) values ($1, $2, 'plataforma', $3, 0, $4, $5, $6)",
-        [staff.business_id, checkId, check.due, check.delivery.code, staff.id, session?.id ?? null],
+        [staff.business_id, checkId, check.due, check.delivery.code, staff.id, session.id],
       );
+    return closeCheckTx(tx, staff, biz, checkId, { tipAnswer: "no", invoice: { kind: "consumidor" } });
   });
-  return closeCheck(staff, checkId, { tipAnswer: "no", invoice: { kind: "consumidor" } });
+}
+
+/** Rappi o el cliente cancelan el pedido: se anula todo con motivo. Lo que no se preparó devuelve sus insumos. */
+export async function cancelDelivery(staff: Staff, checkId: string, input: { reason: string; auth?: AuthInput | null }) {
+  const reason = (input.reason ?? "").trim().slice(0, 120);
+  if (reason.length < 3) throw new UserError("Escribe por qué se cancela");
+  const authorizedBy = await verifyAuthorizer(staff, input.auth, "void");
+  const db = await getDb();
+  await db.tx(async (tx) => {
+    const row = await tx.one<{ status: string; kind: string; number: number }>("select status, kind, number from checks where id = $1 and business_id = $2 for update", [checkId, staff.business_id]);
+    if (!row || row.kind !== "domicilio") throw new UserError("Domicilio no encontrado");
+    if (row.status === "paid" || row.status === "void") throw new UserError("Este domicilio ya se cerró");
+    const paid = await tx.one("select 1 from payments where check_id = $1 and status in ('ok','pending')", [checkId]);
+    if (paid) throw new UserError("Tiene pagos registrados: quítalos antes de cancelar");
+    const items = await tx.query<{ id: string; product_id: string | null; qty: number; status: string; name: string }>(
+      "select id, product_id, qty, status, name from check_items where check_id = $1 and status <> 'void'",
+      [checkId],
+    );
+    const sent = items.filter((i) => i.status !== "draft");
+    const who = requireAuth(sent.length > 0 && !can.voidSent(staff), staff, authorizedBy, "void");
+    await tx.query("delete from check_items where check_id = $1 and status = 'draft'", [checkId]);
+    if (sent.length) {
+      await tx.query("update check_items set status = 'void', void_reason = $2, void_by = $3, void_waste = (status <> 'sent') where check_id = $1 and status in ('sent','ready','delivered')", [
+        checkId,
+        `Pedido cancelado: ${reason}`,
+        who.id,
+      ]);
+      // Lo que apenas estaba en cocina vuelve al inventario; lo ya preparado cuenta como merma
+      const back = sent.filter((i) => i.status === "sent");
+      if (back.length) await moveStock(tx, staff.business_id, back, 1, "anulacion", `Cuenta ${row.number}`, staff.id);
+    }
+    await tx.query("update checks set status = 'void', closed_at = now(), closed_by = $2, updated_at = now() where id = $1", [checkId, staff.id]);
+    await audit(tx, staff.business_id, staff.id, "delivery_cancelled", { check: row.number, reason, items: sent.length, authorizedBy: who.name });
+    await bump(tx, staff.business_id);
+  });
 }
 
 /** Pantalla de turnos del mostrador: pedidos para llevar que se preparan y los que ya están listos. */

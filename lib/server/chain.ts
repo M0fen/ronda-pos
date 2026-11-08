@@ -1,6 +1,7 @@
 import "server-only";
 import { getSedes } from "./business";
 import { getDb } from "./db";
+import { ingredientsView, needsBuying } from "./inventory";
 import { profitReport, type ProfitReport } from "./labor";
 
 export interface SedeSummary {
@@ -20,7 +21,8 @@ export async function chainReport(bizId: string, range: { from: string; to: stri
   // Una sede a la vez: en la demo la base es de una sola conexión
   for (const s of sedes) {
     const report = await profitReport(s.id, range);
-    const low = await db.query<{ name: string }>("select name from ingredients where business_id = $1 and stock < min_stock order by name", [s.id]);
+    // El mismo criterio de "por comprar" del Resumen y de Inventario
+    const low = (await ingredientsView(s.id)).filter(needsBuying).map((i) => ({ name: i.name }));
     const live = await db.one<{ delivery: number; open: number }>(
       "select count(*) filter (where kind = 'domicilio')::int as delivery, count(*)::int as open from checks where business_id = $1 and status in ('open','bill')",
       [s.id],

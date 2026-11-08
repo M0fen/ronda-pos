@@ -1,9 +1,12 @@
+import type { Tx } from "./db-core";
+
 /**
  * Migraciones SQL. Nunca edites una publicada: agrega otra al final.
  * Cada sentencia termina en ";" + salto de línea (así las separa db-core).
  * Todas las tablas llevan business_id: el mismo sistema sirve a varios locales.
+ * `run` corre después del SQL, en la misma transacción, para lo que depende de los datos.
  */
-export const MIGRATIONS: { version: number; sql: string }[] = [
+export const MIGRATIONS: { version: number; sql: string; run?: (tx: Tx) => Promise<void> }[] = [
   {
     version: 1,
     sql: `
@@ -355,5 +358,115 @@ create index checks_delivery on checks (business_id, kind, status);
 alter table payments drop constraint payments_method_check;
 alter table payments add constraint payments_method_check check (method in ('efectivo','nequi','breb','tarjeta','daviplata','plataforma'));
 `,
+  },
+  {
+    // Auditoría: PIN por persona, sesiones y tablets, pagos quitados y facturas anuladas a la vista,
+    // turnos por revisar, consecutivos llenos y restricciones que impiden duplicados
+    version: 4,
+    sql: `
+alter table staff add column pin_fails int not null default 0;
+alter table staff add column locked_until timestamptz;
+alter table staff add column pin_len int not null default 4;
+
+create table devices (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references businesses(id) on delete cascade,
+  name text not null,
+  all_sedes boolean not null default false,
+  token_hash text not null unique,
+  created_by uuid references staff(id) on delete set null,
+  created_at timestamptz not null default now(),
+  last_seen timestamptz,
+  revoked_at timestamptz
+);
+create index devices_business on devices (business_id);
+
+create table device_codes (
+  code_hash text primary key,
+  business_id uuid not null references businesses(id) on delete cascade,
+  name text not null,
+  all_sedes boolean not null default false,
+  created_by uuid references staff(id) on delete set null,
+  expires_at timestamptz not null,
+  used_at timestamptz
+);
+
+create table sessions (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references businesses(id) on delete cascade,
+  staff_id uuid not null references staff(id) on delete cascade,
+  device_id uuid references devices(id) on delete set null,
+  created_at timestamptz not null default now(),
+  last_seen timestamptz not null default now(),
+  revoked_at timestamptz
+);
+create index sessions_staff on sessions (staff_id);
+
+alter table payments drop constraint payments_status_check;
+alter table payments add constraint payments_status_check check (status in ('ok','pending','rejected','removed'));
+alter table payments add column removed_by uuid references staff(id) on delete set null;
+alter table payments add column removed_at timestamptz;
+alter table payments add column removed_reason text;
+
+alter table invoices add column voided_at timestamptz;
+alter table invoices add column voided_by uuid references staff(id) on delete set null;
+alter table invoices add column void_reason text;
+alter table invoices add column credit_note int;
+
+alter table shifts add column review boolean not null default false;
+alter table shifts add column note text not null default '';
+
+alter table customers add column consent_withdrawn_at timestamptz;
+
+insert into counters (business_id, kind, last)
+  select business_id, 'check', max(number) from checks group by business_id
+  on conflict (business_id, kind) do update set last = greatest(counters.last, excluded.last);
+insert into counters (business_id, kind, last)
+  select business_id, 'invoice', max(number) from invoices group by business_id
+  on conflict (business_id, kind) do update set last = greatest(counters.last, excluded.last);
+
+create index invoices_check on invoices (check_id);
+create index payments_session on payments (cash_session_id);
+create index cash_movements_session on cash_movements (session_id);
+create index check_items_sent on check_items (business_id, sent_at);
+create index audit_action on audit_log (business_id, action, created_at);
+`,
+    // Índices únicos: si la base ya trae duplicados (de antes de este arreglo), no se crean y se avisa en el registro
+    async run(tx) {
+      const unique: { name: string; on: string; dupes: string }[] = [
+        {
+          name: "invoices_number_unique",
+          on: "invoices (business_id, prefix, number)",
+          dupes: "select 1 from invoices group by business_id, prefix, number having count(*) > 1 limit 1",
+        },
+        {
+          name: "checks_number_unique",
+          on: "checks (business_id, number)",
+          dupes: "select 1 from checks group by business_id, number having count(*) > 1 limit 1",
+        },
+        {
+          name: "invoices_one_valid",
+          on: "invoices (check_id) where voided_at is null",
+          dupes: "select 1 from invoices group by check_id having count(*) > 1 limit 1",
+        },
+        {
+          name: "checks_one_open_table",
+          on: "checks (table_id) where status in ('open','bill') and table_id is not null",
+          dupes: "select 1 from checks where status in ('open','bill') and table_id is not null group by table_id having count(*) > 1 limit 1",
+        },
+        {
+          name: "cash_sessions_one_open",
+          on: "cash_sessions (business_id) where closed_at is null",
+          dupes: "select 1 from cash_sessions where closed_at is null group by business_id having count(*) > 1 limit 1",
+        },
+      ];
+      for (const u of unique) {
+        if (await tx.one(u.dupes)) {
+          console.warn(`[db] No se creó ${u.name}: la base tiene registros duplicados. Revísalos y crea el índice a mano.`);
+          continue;
+        }
+        await tx.query(`create unique index ${u.name} on ${u.on}`);
+      }
+    },
   },
 ];

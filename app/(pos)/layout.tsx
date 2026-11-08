@@ -1,12 +1,15 @@
 import { PosNav } from "@/components/pos-nav";
 import { can, requireStaff } from "@/lib/server/auth";
 import { getBusiness } from "@/lib/server/business";
+import { getDb } from "@/lib/server/db";
 import { isHappyHour } from "@/lib/core/time";
 import { ROLE_LABEL } from "@/lib/settings";
 
 export default async function PosLayout({ children }: { children: React.ReactNode }) {
   const staff = await requireStaff();
   const biz = await getBusiness(staff.business_id);
+  const db = await getDb();
+  const pin = await db.one<{ pin_len: number }>("select pin_len from staff where id = $1", [staff.id]);
   const links = [
     { href: "/salon", label: "Salón" },
     { href: "/barra", label: "Barra y cocina" },
@@ -22,8 +25,9 @@ export default async function PosLayout({ children }: { children: React.ReactNod
         whiteLabel={biz.settings.theme.whiteLabel}
         sede={biz.sede}
         links={links}
-        staff={{ name: staff.name, color: staff.color, role: ROLE_LABEL[staff.role] ?? staff.role }}
+        staff={{ id: staff.id, name: staff.name, color: staff.color, role: ROLE_LABEL[staff.role] ?? staff.role, pinLen: pin?.pin_len ?? 4 }}
         happy={isHappyHour(biz.settings.happyHour) ? biz.settings.happyHour.label : null}
+        lockMinutes={biz.settings.security.lockMinutes}
       />
       <div className="flex-1">{children}</div>
     </div>

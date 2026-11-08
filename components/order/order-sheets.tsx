@@ -188,34 +188,6 @@ export function ItemSheet({
   );
 }
 
-/** Autorización de un superior en el momento: PIN del encargado. */
-export function AuthSheet({ label, onClose, onPin }: { label: string | null; onClose: () => void; onPin: (pin: string) => void }) {
-  const [pin, setPin] = useState("");
-  useEffect(() => setPin(""), [label]);
-  if (!label) return null;
-  return (
-    <Sheet open onClose={onClose} title="Autorización del encargado">
-      <p className="text-[15px]">{label}. Pide a quien está a cargo que escriba su PIN.</p>
-      <div className="my-5 flex justify-center gap-4">
-        {[0, 1, 2, 3].map((i) => (
-          <span key={i} className={`size-4 rounded-full ${i < pin.length ? "bg-tinto" : "bg-tinto/12"}`} />
-        ))}
-      </div>
-      <Keypad
-        onKey={(k) => {
-          if (k === "del") return setPin((p) => p.slice(0, -1));
-          const next = (pin + k).slice(0, 4);
-          setPin(next);
-          if (next.length === 4) {
-            onPin(next);
-            setPin("");
-          }
-        }}
-      />
-    </Sheet>
-  );
-}
-
 export function DiscountSheet({ open, current, limit, onClose, onApply }: { open: boolean; current: number; limit: number; onClose: () => void; onApply: (pct: number, reason: string) => void }) {
   const [pct, setPct] = useState(current);
   const [reason, setReason] = useState("");
@@ -242,7 +214,7 @@ export function DiscountSheet({ open, current, limit, onClose, onApply }: { open
         ))}
       </div>
       <input className="mt-4 h-12 w-full rounded-xl border border-linea-2 px-3 outline-none focus:border-tinto" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Motivo (ej. cliente frecuente, error en la orden)" />
-      <p className="mt-2 text-sm text-humo">Más de {limit} % necesita el PIN del encargado.</p>
+      <p className="mt-2 text-sm text-humo">Más de {limit} % lo autoriza el dueño o la administración.</p>
     </Sheet>
   );
 }
