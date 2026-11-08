@@ -27,8 +27,12 @@ export default async function ChainPage({ searchParams }: { searchParams: Promis
   const [{ sedes, totals }, biz] = await Promise.all([chainReport(staff.business_id, range), getBusiness(staff.business_id)]);
   const profit = totals.net - totals.cogs - totals.labor - totals.commission;
   const ranked = [...sedes].sort((a, b) => pct(profitOf(b), b.report.totals.net) - pct(profitOf(a), a.report.totals.net));
-  const best = ranked[0];
-  const worst = ranked.length > 1 ? ranked[ranked.length - 1] : undefined;
+  // Sin ventas no hay con qué comparar: nada de insignias (antes de abrir, todas quedarían "mejor" o "peor" por azar)
+  const withSales = ranked.filter((s) => s.report.totals.net > 0);
+  const best = withSales.length > 1 ? withSales[0] : undefined;
+  const worst = withSales.length > 1 ? withSales[withSales.length - 1] : undefined;
+  const laborPill = (s: SedeSummary, labor: number) =>
+    s.report.totals.net > 0 ? <Pill tone={labor > s.report.alertPct ? "red" : labor > 30 ? "yellow" : "green"}>{labor} %</Pill> : <Pill tone="neutral">Sin ventas aún</Pill>;
   const maxNet = Math.max(1, ...sedes.map((s) => s.report.totals.net));
   const tab = (active: boolean) => `rounded-xl px-4 py-2 text-[15px] font-semibold ${active ? "bg-tinto text-cal" : "text-tinto-2 hover:bg-tinto/6"}`;
 
@@ -58,7 +62,7 @@ export default async function ChainPage({ searchParams }: { searchParams: Promis
         <Kpi wide label="Ventas netas de la cadena" value={cop(totals.net)} sub={`${totals.checks} cuentas · ticket promedio ${cop(totals.net / Math.max(1, totals.checks))}`} dark />
         <Kpi label="Lo que queda" value={cop(profit)} sub={`${pct(profit, totals.net)} % de lo vendido, después de insumos, equipo y comisiones: para arriendo, servicios y ganancia`} />
         <Kpi label="Domicilios" value={`${pct(totals.delivered, totals.net)} %`} sub={`de las ventas · comisiones ${cop(totals.commission)}`} />
-        <Kpi label="Equipo" value={`${pct(totals.labor, totals.net)} %`} sub={`de las ventas · insumos ${pct(totals.cogs, totals.net)} %`} />
+        <Kpi label="Equipo" value={totals.net ? `${pct(totals.labor, totals.net)} %` : "Sin ventas aún"} sub={totals.net ? `de las ventas · insumos ${pct(totals.cogs, totals.net)} %` : `costo hasta ahora ${cop(totals.labor)}`} />
         <Kpi label="En turno ahora" value={String(totals.onShift)} sub={`personas en ${sedes.filter((s) => s.report.live?.onShift.length).length} sedes`} />
       </section>
 
@@ -91,7 +95,7 @@ export default async function ChainPage({ searchParams }: { searchParams: Promis
                   <span>Domicilios {pct(deliveredOf(s), t.net)} %</span>
                   <span>Insumos {pct(t.cogs, t.net)} %</span>
                   <span>
-                    Equipo <Pill tone={labor > s.report.alertPct ? "red" : labor > 30 ? "yellow" : "green"}>{labor} %</Pill>
+                    Equipo {laborPill(s, labor)}
                   </span>
                 </p>
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -140,7 +144,7 @@ export default async function ChainPage({ searchParams }: { searchParams: Promis
                     <td className="py-3 pr-3 text-right tnum">{pct(deliveredOf(s), t.net)} %</td>
                     <td className="py-3 pr-3 text-right tnum">{pct(t.cogs, t.net)} %</td>
                     <td className="py-3 pr-3 text-right">
-                      <Pill tone={labor > s.report.alertPct ? "red" : labor > 30 ? "yellow" : "green"}>{labor} %</Pill>
+                      {laborPill(s, labor)}
                     </td>
                     <td className={cn("py-3 pr-3 text-right font-bold tnum", profitOf(s) < 0 && "text-cereza")}>
                       {cop(profitOf(s))}

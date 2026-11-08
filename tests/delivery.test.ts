@@ -15,6 +15,16 @@ describe("etapas del domicilio", () => {
       { name: "Antojo de patatas", qty: 2, modifiers: [{ name: "Queso" }], status: "ready" },
       { name: "Burger smash doble", qty: 1, modifiers: [], status: "void" },
     ]);
-    expect(list).toEqual(["2 × Antojo de patatas (Queso)", "Salsas y cubiertos", "Factura en la bolsa", "Bolsa sellada"]);
+    expect(list).toEqual(["2 × Antojo de patatas (Queso)", "Salsas y cubiertos", "Comanda en la bolsa", "Bolsa sellada"]);
+  });
+
+  it("el mismo producto en dos rondas sale en una sola línea: marcar una no marca otra", () => {
+    const list = packingList([
+      { name: "Antojo de patatas", qty: 1, modifiers: [{ name: "Queso" }], status: "ready" },
+      { name: "Antojo de patatas", qty: 2, modifiers: [{ name: "Queso" }], status: "ready" },
+      { name: "Antojo de patatas", qty: 1, modifiers: [], status: "ready" },
+    ]);
+    expect(list.slice(0, 2)).toEqual(["3 × Antojo de patatas (Queso)", "1 × Antojo de patatas"]);
+    expect(new Set(list).size).toBe(list.length);
   });
 });

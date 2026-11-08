@@ -9,7 +9,7 @@ import { addDays, bogotaParts, clock, jornadaKey } from "@/lib/core/time";
 import { fmtTime } from "@/lib/format";
 import { cop } from "@/lib/money";
 import { can, requireStaff } from "@/lib/server/auth";
-import { profitReport, type ProfitRow } from "@/lib/server/labor";
+import { profitReport, shiftsToReview, type ProfitRow } from "@/lib/server/labor";
 import { ROLE_LABEL } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +19,11 @@ const WEEKDAY = ["", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sáb
 const pct = (part: number, total: number) => (total > 0 ? Math.round((part / total) * 100) : 0);
 const profitOf = (r: ProfitRow) => r.net - r.cogs - r.labor - r.commission;
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+/** Hora (HH:MM, Bogotá) unas horas después de un momento: la sugerencia de salida de un turno olvidado */
+const hhmmAfter = (iso: string, hours: number) => {
+  const m = bogotaParts(new Date(Date.parse(iso) + hours * 3_600_000)).minutes;
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+};
 
 export default async function ProfitPage({ searchParams }: { searchParams: Promise<{ rango?: string }> }) {
   const staff = await requireStaff();
@@ -27,7 +32,10 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
   const span = rango === "hoy" ? 1 : rango === "14" ? 14 : 7;
   const today = jornadaKey();
   // Hoy, en vivo; 7 y 14 días, las jornadas ya cerradas (hoy va en el bloque de arriba)
-  const r = await profitReport(staff.business_id, span === 1 ? { from: today, to: today } : { from: addDays(today, -span), to: addDays(today, -1) });
+  const [r, review] = await Promise.all([
+    profitReport(staff.business_id, span === 1 ? { from: today, to: today } : { from: addDays(today, -span), to: addDays(today, -1) }),
+    shiftsToReview(staff.business_id),
+  ]);
   const t = r.totals;
   const profit = profitOf(t);
   const hours = t.minutes / 60;
@@ -191,6 +199,38 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
         </div>
 
         <div className="min-w-0 space-y-4">
+          {review.length ? (
+            <div className="rounded-3xl bg-cereza-soft p-5 ring-1 ring-cereza/30">
+              <h2 className="flex items-center gap-2 font-bold text-cereza">
+                <AlertTriangle size={18} /> Turnos por revisar
+              </h2>
+              <p className="mt-1 text-sm">Quedaron abiertos y se cerraron solos al marcar de nuevo: pon la hora real de salida para que el costo cuadre.</p>
+              <ul className="mt-2 divide-y divide-cereza/15">
+                {review.map((x) => (
+                  <li key={x.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <span>
+                      <span className="block font-semibold">{x.name}</span>
+                      <span className="text-sm">Entró {dayLabel(bogotaParts(new Date(x.clock_in)).dayKey)} a las {fmtTime(x.clock_in)}</span>
+                    </span>
+                    <CloseShift shiftId={x.id} name={x.name} nowHHMM={hhmmAfter(x.clock_in, 8)} urgent label="Poner hora real" />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {r.noRecipe.pct >= 1 ? (
+            <div className="rounded-3xl bg-fachada-soft p-5 text-[15px] text-[#4a3500]">
+              <p className="font-bold">El {r.noRecipe.pct} % de lo vendido no tiene receta</p>
+              <p className="mt-1">
+                Son {cop(r.noRecipe.net)} sin impuesto cuyos insumos no se cuentan, así que el margen sale más alto de lo real
+                {r.noRecipe.products.length ? ` (por ejemplo: ${r.noRecipe.products.join(", ")})` : ""}. Agrega las recetas en{" "}
+                <Link href="/panel/carta" className="font-semibold underline">
+                  Carta
+                </Link>
+                .
+              </p>
+            </div>
+          ) : null}
           <div className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
             <h2 className="flex items-center gap-2 font-bold">
               <AlertTriangle size={18} className="text-cereza" /> Jornada y recargos
@@ -230,7 +270,7 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
                     <span>
                       <span className="block font-semibold">{c.label}</span>
                       <span className="text-sm text-humo">
-                        {pct(c.net, t.net)} % de las ventas · {c.checks} pedidos · ticket {cop(c.total / Math.max(1, c.checks))}
+                        {pct(c.net, t.net)} % de las ventas · {c.checks} pedidos · ticket {cop(c.net / Math.max(1, c.checks))} sin impuesto
                       </span>
                     </span>
                     <span className="text-right">
@@ -403,6 +443,12 @@ function TurnoCard({ title, sub, row, tone }: { title: string; sub: string; row?
           <dd className="text-right tnum">{cop(row.cogs)}</dd>
           <dt className="text-humo">Equipo · {fmtHours(row.minutes)}</dt>
           <dd className="text-right tnum">{cop(row.labor)}</dd>
+          {row.commission ? (
+            <>
+              <dt className="text-humo">Comisiones</dt>
+              <dd className="text-right tnum">{cop(row.commission)}</dd>
+            </>
+          ) : null}
           <dt className="font-semibold">Queda</dt>
           <dd className={cn("text-right font-bold tnum", profit < 0 && "text-cereza")}>{cop(profit)}</dd>
         </dl>

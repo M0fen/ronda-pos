@@ -43,7 +43,21 @@ function beep() {
   } catch {}
 }
 
-export function Kds({ board, station, business, staff, serverNow }: { board: Board; station: string | null; business: string; staff: { name: string; canCharge: boolean }; serverNow: number }) {
+export function Kds({
+  board,
+  station,
+  business,
+  businessId,
+  staff,
+  serverNow,
+}: {
+  board: Board;
+  station: string | null;
+  business: string;
+  businessId: string;
+  staff: { name: string; canCharge: boolean };
+  serverNow: number;
+}) {
   const router = useRouter();
   const now = useServerNow(serverNow, 1000);
   const [sound, setSound] = useState(false);
@@ -91,7 +105,8 @@ export function Kds({ board, station, business, staff, serverNow }: { board: Boa
             </Link>
           ))}
         </nav>
-        <a href="/pantalla" target="_blank" rel="noopener" className={btn("light", "sm")}>
+        {/* Con la sede en el enlace: el televisor sin sesión muestra los pedidos de esta sede */}
+        <a href={`/pantalla?sede=${businessId}`} target="_blank" rel="noopener" className={btn("light", "sm")}>
           Pantalla de turnos
         </a>
         <p className="hidden text-sm text-cal/70 md:block">{board.avgMinutes ? `Promedio ${board.avgMinutes.toLocaleString("es-CO")} min` : "Sin tiempos aún"}</p>
@@ -103,20 +118,20 @@ export function Kds({ board, station, business, staff, serverNow }: { board: Boa
         </span>
       </header>
 
-      <div className="grid gap-4 p-3 sm:p-5 xl:grid-cols-[1fr_340px]">
+      <div className="grid gap-4 p-3 sm:p-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <section aria-label="En preparación">
           <h2 className="mb-3 text-sm font-semibold text-cal/70">En preparación · {board.active.length}</h2>
           {board.active.length ? (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(250px,100%),1fr))] gap-3">
               {board.active.map((t) => {
                 const mins = Math.floor((now - new Date(t.sentAt).getTime()) / 60_000);
                 const secs = Math.floor(((now - new Date(t.sentAt).getTime()) / 1000) % 60);
                 const tone = mins >= 15 ? "bg-cereza" : mins >= 8 ? "bg-fachada text-tinto" : "bg-puerta";
                 return (
                   <article key={t.key} className="flex flex-col overflow-hidden rounded-2xl bg-noche-2 ring-1 ring-white/8">
-                    <header className={cn("flex items-center justify-between px-4 py-2.5", tone)}>
-                      <span className="text-xl font-bold [font-stretch:108%]">{t.label}</span>
-                      <span className="text-xl font-bold tnum">
+                    <header className={cn("flex items-center justify-between gap-2 px-4 py-2.5", tone)}>
+                      <span className="min-w-0 truncate text-xl font-bold [font-stretch:108%]">{t.label}</span>
+                      <span className="shrink-0 text-xl font-bold tnum">
                         {mins}:{String(secs).padStart(2, "0")}
                       </span>
                     </header>
@@ -173,9 +188,9 @@ export function Kds({ board, station, business, staff, serverNow }: { board: Boa
             <div className="space-y-2">
               {board.ready.map((t) => (
                 <article key={t.key} className="rounded-2xl bg-puerta/20 p-3 ring-1 ring-puerta">
-                  <div className="flex items-center justify-between">
-                    <span className="text-lg font-bold">{t.label}</span>
-                    <span className="text-[13px] text-cal/70">{t.waiter}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate text-lg font-bold">{t.label}</span>
+                    <span className="shrink-0 text-[13px] text-cal/70">{t.waiter}</span>
                   </div>
                   <p className="mt-1 text-[15px] text-cal/85">{t.items.map((i) => `${i.qty} ${i.name}`).join(", ")}</p>
                   {t.channel ? (

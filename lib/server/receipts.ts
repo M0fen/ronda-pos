@@ -22,6 +22,9 @@ export interface InvoiceRow {
   total: number;
   status: string;
   created_at: string;
+  voided_at: string | null;
+  void_reason: string | null;
+  credit_note: number | null;
 }
 
 async function build(inv: InvoiceRow | null, origin: string) {
@@ -35,7 +38,7 @@ async function build(inv: InvoiceRow | null, origin: string) {
 
 export async function receiptForCheck(bizId: string, checkId: string, origin: string) {
   const db = await getDb();
-  const inv = await db.one<InvoiceRow>("select * from invoices where check_id = $1 and business_id = $2 order by created_at desc limit 1", [checkId, bizId]);
+  const inv = await db.one<InvoiceRow>("select * from invoices where check_id = $1 and business_id = $2 order by (voided_at is null) desc, created_at desc limit 1", [checkId, bizId]);
   return build(inv, origin);
 }
 

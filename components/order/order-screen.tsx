@@ -27,9 +27,11 @@ import { cop } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { Sheet } from "../sheet";
 import { report, toast } from "../toast";
-import { AuthSheet, CustomerSheet, DiscountSheet, GuestsSheet, ItemSheet, ModifierSheet, MoveSheet, NoteSheet, PriceTag, Stepper } from "./order-sheets";
+import { AuthSheet, type AuthLevel, type AuthRequest, type Authorizer } from "../auth-sheet";
+import { CustomerSheet, DiscountSheet, GuestsSheet, ItemSheet, ModifierSheet, MoveSheet, NoteSheet, PriceTag, Stepper } from "./order-sheets";
 
 type Result = { ok: boolean; error?: string; message?: string; data?: unknown; fields?: Record<string, string> };
+type Auth = { id: string; pin: string };
 type Optimistic = { type: "add"; item: CheckItem } | { type: "qty"; id: string; qty: number };
 
 let tmp = 0;
@@ -40,12 +42,16 @@ export function OrderScreen({
   freeTables,
   perms,
   rules,
+  authorizers,
+  meId,
 }: {
   check: CheckView;
   menu: Menu;
   freeTables: { id: string; name: string; zone: string }[];
   perms: { voidSent: boolean; manage: boolean; charge: boolean };
   rules: { discountLimitPct: number; loyaltyGoal: number; reward: string; loyalty: boolean };
+  authorizers: Authorizer[];
+  meId: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -62,13 +68,15 @@ export function OrderScreen({
   const [noteItem, setNoteItem] = useState<CheckItem | null>(null);
   const [sheet, setSheet] = useState<"menu" | "discount" | "customer" | "move" | "guests" | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
-  const [auth, setAuth] = useState<{ label: string; run: (pin: string) => Promise<Result> } | null>(null);
+  const [auth, setAuth] = useState<(AuthRequest & { run: (auth: Auth) => Promise<Result>; done?: string }) | null>(null);
 
   const totals = useMemo(
     () => checkTotals(items.map((i) => ({ unitPrice: i.unit_price, qty: i.qty, modifiers: i.modifiers, taxRate: Number(i.tax_rate), status: i.status, courtesy: i.courtesy })), check.discount_pct),
     [items, check.discount_pct],
   );
   const drafts = items.filter((i) => i.status === "draft");
+  // Una cuenta toda en cortesía (total $0) también se cierra
+  const chargeable = items.some((i) => i.status !== "draft" && i.status !== "void");
   const ready = items.filter((i) => i.status === "ready");
   const readyUnits = ready.reduce((s, i) => s + i.qty, 0);
   const sentRounds = useMemo(() => {
@@ -89,12 +97,12 @@ export function OrderScreen({
     return menu.products.filter((p) => p.categoryId === category);
   }, [query, category, menu.products, favorites]);
 
-  /** Ejecuta una acción; si pide autorización, abre el PIN del encargado y reintenta. */
-  function run(action: (pin?: string) => Promise<Result>, label: string, done?: string, after?: () => void) {
+  /** Ejecuta una acción; si pide autorización, abre la hoja para que otra persona autorice con su PIN, y reintenta. */
+  function run(action: (auth?: Auth) => Promise<Result>, label: string, done?: string, after?: () => void) {
     start(async () => {
       const r = await action();
       if (!r.ok && r.fields?.auth) {
-        setAuth({ label, run: (pin) => action(pin) });
+        setAuth({ label, level: r.fields.auth as AuthLevel, run: (a) => action(a), done });
         return;
       }
       if (report(r, done)) {
@@ -300,17 +308,19 @@ export function OrderScreen({
           </button>
         ) : (
           <>
-            <a
-              href={`/recibo/${check.id}?modo=precuenta`}
-              target="_blank"
-              className={btn("soft", "xl", "px-4")}
-              onClick={() => check.status === "open" && totals.total > 0 && start(async () => void (await billAction(check.id, true)))}
-            >
-              <Receipt size={20} /> <span className="hidden sm:inline">Pre-cuenta</span>
-            </a>
+            {totals.total > 0 ? (
+              <a
+                href={`/recibo/${check.id}?modo=precuenta`}
+                target="_blank"
+                className={btn("soft", "xl", "px-4")}
+                onClick={() => check.status === "open" && start(async () => void (await billAction(check.id, true)))}
+              >
+                <Receipt size={20} /> <span className="hidden max-md:sm:inline lg:inline">Pre-cuenta</span>
+              </a>
+            ) : null}
             {perms.charge ? (
-              <Link href={`/cuenta/${check.id}/cobro`} className={btn("primary", "xl", cn("flex-1", !totals.total && "pointer-events-none opacity-40"))} aria-disabled={!totals.total}>
-                Cobrar {cop(totals.total)}
+              <Link href={`/cuenta/${check.id}/cobro`} className={btn("primary", "xl", cn("flex-1", !chargeable && "pointer-events-none opacity-40"))} aria-disabled={!chargeable}>
+                {totals.total > 0 ? `Cobrar ${cop(totals.total)}` : "Cerrar cuenta"}
               </Link>
             ) : (
               <span className="flex flex-1 items-center justify-center text-sm text-humo">El cobro lo hace caja</span>
@@ -322,14 +332,15 @@ export function OrderScreen({
   );
 
   return (
-    <div className="grid h-[calc(100dvh-57px)] grid-cols-1 md:grid-cols-[1fr_340px] lg:grid-cols-[190px_1fr_380px]">
+    // minmax(0, 1fr): la columna de productos se encoge en una tablet en vertical y la cuenta no se sale de la pantalla
+    <div className="grid h-[calc(100dvh-57px)] grid-cols-1 md:grid-cols-[minmax(0,1fr)_340px] lg:grid-cols-[190px_minmax(0,1fr)_380px]">
       {/* Categorías en columna (tablet horizontal) */}
       <nav className="hidden overflow-y-auto border-r border-linea bg-papel/50 p-2 lg:block" aria-label="Categorías">
         <CategoryButtons menu={menu} favorites={favorites.length > 0} category={category} setCategory={(c) => (setCategory(c), setQuery(""))} vertical />
       </nav>
 
       {/* Productos */}
-      <section className="flex min-h-0 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-col">
         <div className="flex items-center gap-2 border-b border-linea px-3 py-2.5">
           <label className="relative flex-1">
             <Search size={18} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-humo" />
@@ -382,7 +393,7 @@ export function OrderScreen({
       </aside>
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-linea bg-papel p-3 md:hidden">
         <button className={btn(drafts.length ? "send" : "dark", "lg", "w-full justify-between")} onClick={() => setPanelOpen(true)}>
-          <span>{drafts.length ? `Ver y enviar (${drafts.reduce((s, i) => s + i.qty, 0)})` : `Ver cuenta · ${check.label}`}</span>
+          <span className="truncate">{drafts.length ? `Ver y enviar (${drafts.reduce((s, i) => s + i.qty, 0)}) · ${check.label}` : `Ver cuenta · ${check.label}`}</span>
           <span className="tnum">{cop(totals.total)}</span>
         </button>
       </div>
@@ -422,28 +433,32 @@ export function OrderScreen({
         item={itemSheet}
         onClose={() => setItemSheet(null)}
         onDelivered={() => {
-          setItemSheet(null);
-          run(() => deliveredAction(check.id), "", "Entregado");
-        }}
-        onCourtesy={() => {
           const id = itemSheet!.id;
           setItemSheet(null);
-          run((pin) => courtesyAction(id, pin), "Dar una cortesía", "Listo");
+          run(() => deliveredAction(check.id, id), "", "Entregado");
+        }}
+        onCourtesy={() => {
+          const it = itemSheet!;
+          setItemSheet(null);
+          run((a) => courtesyAction(it.id, a), it.courtesy ? `Quitar la cortesía de ${it.name}` : `Dar ${it.qty} ${it.name} como cortesía`, "Listo");
         }}
         onVoid={(reason, waste) => {
           const it = itemSheet!;
           setItemSheet(null);
-          run((pin) => voidItemAction(it.id, { reason, waste, pin }), `Anular ${it.qty} ${it.name}`, "Anulado");
+          run((a) => voidItemAction(it.id, { reason, waste, auth: a }), `Anular ${it.qty} ${it.name}`, "Anulado");
         }}
       />
       <AuthSheet
-        label={auth?.label ?? null}
+        request={auth}
+        authorizers={authorizers}
+        meId={meId}
+        pending={pending}
         onClose={() => setAuth(null)}
-        onPin={(pin) => {
+        onAuth={(credentials) => {
           const a = auth!;
           start(async () => {
-            const r = await a.run(pin);
-            if (report(r, "Autorizado")) {
+            const r = await a.run(credentials);
+            if (report(r, a.done ?? "Autorizado")) {
               setAuth(null);
               router.refresh();
             }
@@ -457,7 +472,7 @@ export function OrderScreen({
         onClose={() => setSheet(null)}
         onApply={(pct, reason) => {
           setSheet(null);
-          run((pin) => discountAction(check.id, { pct, reason, pin }), `Descuento del ${pct} %`, pct ? "Descuento aplicado" : "Descuento quitado");
+          run((a) => discountAction(check.id, { pct, reason, auth: a }), `Descuento del ${pct} %`, pct ? "Descuento aplicado" : "Descuento quitado");
         }}
       />
       <CustomerSheet

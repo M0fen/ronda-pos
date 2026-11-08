@@ -2,7 +2,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { cache } from "react";
 import { DEFAULT_SETTINGS, mergeSettings, type Settings } from "../settings";
-import { getDb, type Tx } from "./db";
+import { getDb, noteWrite, type Tx } from "./db";
 
 export interface Business {
   id: string;
@@ -50,11 +50,11 @@ export async function getSedes(bizId: string) {
 }
 
 /** Consecutivo propio de cada sede para cuentas y facturas: cada una con su numeración y su resolución. */
-export async function nextNumber(tx: Pick<Tx, "one">, bizId: string, kind: "check" | "invoice") {
+export async function nextNumber(tx: Pick<Tx, "one">, bizId: string, kind: "check" | "invoice" | "credit") {
   const row = await tx.one<{ last: number }>(
     `insert into counters (business_id, kind, last) values ($1, $2, $3)
      on conflict (business_id, kind) do update set last = counters.last + 1 returning last`,
-    [bizId, kind, kind === "check" ? 101 : 1001],
+    [bizId, kind, kind === "check" ? 101 : kind === "invoice" ? 1001 : 1],
   );
   return Number(row!.last);
 }
@@ -90,6 +90,7 @@ export function brandIcon(b: Brand) {
 
 /** Marca que algo cambió: las pantallas que escuchan (salón, barra) se refrescan. */
 export async function bump(tx: Pick<Tx, "query">, bizId: string) {
+  noteWrite();
   await tx.query("update pulse set version = version + 1 where business_id = $1", [bizId]);
 }
 

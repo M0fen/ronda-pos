@@ -8,7 +8,7 @@ import { clientCheck, tableByToken } from "@/lib/server/qr";
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }): Promise<Metadata> {
   const { token } = await params;
   const table = await tableByToken(token);
-  return { title: table ? `Carta · ${table.business.name}` : "Carta", robots: { index: false } };
+  return { title: table ? { absolute: `Carta · ${table.business.name}` } : "Carta", robots: { index: false } };
 }
 
 export default async function QrPage({ params }: { params: Promise<{ token: string }> }) {

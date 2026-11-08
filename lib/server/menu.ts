@@ -2,6 +2,7 @@ import "server-only";
 import { effectivePrice, isHappyHour } from "../core/time";
 import { getBusiness } from "./business";
 import { getDb } from "./db";
+import { UserError } from "./errors";
 
 export interface MenuOption {
   id: string;
@@ -128,7 +129,7 @@ export interface ChosenItem {
 /** Valida modificadores contra la carta y arma la línea con precios del servidor (nunca del dispositivo). */
 export function priceItem(menu: Menu, item: ChosenItem) {
   const product = menu.products.find((p) => p.id === item.productId);
-  if (!product) throw new Error("Producto no encontrado");
+  if (!product) throw new UserError("Ese producto ya no está en la carta", { missing: String(item.productId) });
   const chosen = new Set(item.modifierIds ?? []);
   const modifiers: { name: string; price: number }[] = [];
   for (const gid of product.groups) {

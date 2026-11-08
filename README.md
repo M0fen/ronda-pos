@@ -24,9 +24,9 @@ Un recorrido de cinco minutos:
 
 1. Entra como **Juan Pablo**. Aprueba el pedido QR de la mesa 7 y abre la mesa 4.
 2. Pide un Antojo de patatas (elige la salsa), dos Club Colombia y una Burger smash doble. Toca **Enviar**.
-3. Anula la burger: como ya salió a cocina, pide el PIN de caja (2222).
+3. Anula la burger: como ya salió a cocina, la autoriza otra persona. Elige a Valentina (caja) y escribe su PIN (2222).
 4. Abre **Barra y cocina** en otra pestaña y marca el tiquete como listo. El salón lo muestra al instante.
-5. Cobra la mesa: propina sí, partes iguales, una parte con Bre-B y otra en efectivo. Sale la factura con su código QR.
+5. Cobra la mesa: propina sí, partes iguales, una parte con Bre-B (con la referencia del comprobante) y otra en efectivo. Sale la factura con su código QR.
 6. Entra como **Andrés** y mira el panel (Hoy y Ayer), el inventario, la carta, los clientes y los QR de las mesas. Abre un QR en el celular para ver la carta del cliente.
 7. En **Panel → Rentabilidad** mira qué turnos se pagan solos, cuánto costó cada persona con recargos y carga, y las alertas de jornada (42 horas, extras, domingos y festivos).
 8. En `/entrar`, toca **Marcar turno**, elige a Luisa y escribe 6666: queda en turno y suma a la mano de obra de hoy.
@@ -52,7 +52,7 @@ En **Panel → Ajustes** está el botón para reiniciar la demo.
 ```bash
 npm install
 npm run dev        # http://localhost:3000
-npm test           # reglas de precios, propina, división de cuentas y jornada
+npm test           # reglas puras y flujos de plata, editores y alta contra una base real
 npm run typecheck
 npm run build      # genera la base de la demo y compila
 ```
@@ -67,6 +67,14 @@ Sin `DATABASE_URL` la app usa PGlite (Postgres dentro de Node) en `.data/` y sie
 La demo en memoria se reinicia sola cuando Vercel apaga la función (tras unos minutos sin visitas) y cada copia de la función tiene sus propios datos. Para que los datos persistan, conecta una base Postgres (por ejemplo Neon desde el Marketplace de Vercel) con `DATABASE_URL`; si además pones `DEMO_MODE=true`, se siembra el local de ejemplo y los pagos siguen simulados.
 
 Variables en `.env.example`.
+
+## Instalar un local real
+
+1. Base Postgres propia (Neon o Supabase) en `DATABASE_URL`, sin `DEMO_MODE`. Pon `SESSION_SECRET` (32 caracteres al azar: sin ella no se abren sesiones) y `SETUP_TOKEN` (12 caracteres o más).
+2. Abre `/entrar`: con la base vacía lleva a `/alta`. Con el código de instalación se crea el local (nombre, NIT, impuesto), el salón y el dueño con un PIN de 6 números. Esa tablet queda enrolada y el dueño adentro.
+3. El panel muestra **Para empezar a vender** hasta completar: carta (categorías, productos y precios), mesas y zonas, equipo con su PIN y sus tablets (Panel → Equipo da un código de 6 números que cada tablet escribe en `/entrar`), resolución de facturación de la DIAN (prefijo, rango y vigencia) y la primera caja. Insumos y recetas son opcionales: con ellos se descuenta el inventario y salen los márgenes.
+
+Seguridad: fuera de la demo solo las tablets enroladas muestran al equipo; cada persona se bloquea 15 minutos tras 5 PIN errados; la tablet se bloquea sola tras unos minutos sin uso (Panel → Ajustes); las sesiones se cierran al cambiar un PIN o un rol, o al quitar una tablet. La factura electrónica no se envía a la DIAN hasta conectar un proveedor tecnológico.
 
 ## Cómo está hecho
 

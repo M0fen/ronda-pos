@@ -33,9 +33,14 @@ export function Toaster() {
     return () => window.removeEventListener("ronda-toast", on);
   }, []);
   return (
-    <div className="no-print pointer-events-none fixed inset-x-0 bottom-4 z-[80] flex flex-col items-center gap-2 px-4" aria-live="polite">
+    <div className="no-print pointer-events-none fixed inset-x-0 bottom-[var(--toast-bottom,1rem)] z-[80] flex flex-col items-center gap-2 px-4" aria-live="polite">
       {items.map((t) => (
-        <div key={t.id} className={`pointer-events-auto flex max-w-md items-center gap-3 rounded-2xl px-4 py-3 text-[15px] font-medium shadow-lg ${t.tone === "error" ? "bg-cereza text-white" : "bg-tinto text-cal"}`} role="status">
+        // Sin "Deshacer", el aviso no recibe toques: no tapa los botones de abajo
+        <div
+          key={t.id}
+          className={`${t.undo ? "pointer-events-auto" : "pointer-events-none"} flex max-w-md items-center gap-3 rounded-2xl px-4 py-3 text-[15px] font-medium shadow-lg ${t.tone === "error" ? "bg-cereza text-white" : "bg-tinto text-cal"}`}
+          role="status"
+        >
           {t.tone === "error" ? <CircleAlert size={18} className="shrink-0" /> : <Check size={18} className="shrink-0" />}
           <span>{t.text}</span>
           {t.undo ? (

@@ -15,6 +15,14 @@ export const fmtDay = (d: Date | string) => {
 };
 export const fmtShort = (d: Date | string) => short.format(new Date(d));
 export const fmtFull = (d: Date | string) => tidy(full.format(new Date(d))).replace(",\u00a0", ", ");
+/** "hoy, 2:00 p. m." o "jue 5 nov, 2:00 p. m.": para lo que pudo empezar otro día */
+export const fmtWhen = (d: Date | string, now = new Date()) => {
+  const key = (x: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(x);
+  const date = new Date(d);
+  if (key(date) === key(now)) return fmtTime(date);
+  const wd = new Intl.DateTimeFormat("es-CO", { weekday: "short", timeZone: "America/Bogota" }).format(date).replace(".", "");
+  return `${wd} ${fmtShort(date).replace(".", "")}, ${fmtTime(date)}`;
+};
 export const minutesAgo = (d: Date | string, now = Date.now()) => Math.max(0, Math.floor((now - new Date(d).getTime()) / 60_000));
 
 export function fmtQty(n: number, unit: string) {

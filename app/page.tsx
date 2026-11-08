@@ -23,7 +23,7 @@ const FEATURES = [
   },
   {
     title: "Rappi y domicilios, sin errores en la bolsa",
-    text: "Rappi y el domicilio propio en un solo tablero, de que entran a que salen. La cocina ve en cuánto llega el domiciliario y ninguna bolsa se cierra sin revisar la lista: cada producto con sus salsas, los cubiertos y la factura.",
+    text: "Rappi y el domicilio propio en un solo tablero, de que entran a que salen. La cocina ve en cuánto llega el domiciliario y ninguna bolsa se cierra sin revisar la lista: cada producto con sus salsas, los cubiertos y la comanda.",
     shot: "/shots/domicilios.webp",
   },
   {
@@ -54,13 +54,13 @@ const FEATURES = [
   },
   {
     title: "El dueño duerme tranquilo",
-    text: "Anular lo enviado pide el PIN del encargado. La caja se cierra con arqueo ciego y el resumen del día te llega por WhatsApp.",
+    text: "Anular lo enviado, una cortesía o un descuento grande los autoriza otra persona con su PIN, y todo queda con nombre y motivo. La caja se cierra con arqueo a ciegas y el resumen del día sale listo para mandarlo por WhatsApp.",
     shot: "/shots/panel.webp",
   },
 ];
 
 const FAQ = [
-  ["¿Tengo que comprar equipos?", "No. Funciona en la tablet o el celular que ya tienes. Si quieres imprimir la comanda y la factura, sirve una impresora térmica de 80 mm de red."],
+  ["¿Tengo que comprar equipos?", "No. Funciona en la tablet o el celular que ya tienes. La pre-cuenta, la factura y los QR se imprimen desde la tablet en una impresora térmica de 80 mm; la comanda de cocina se ve en la pantalla de barra y cocina."],
   ["¿Qué pasa si se cae el internet?", "El sistema trabaja en línea. Si se cae el internet del local, la tablet puede seguir con los datos de un celular."],
   ["¿Emite factura electrónica?", "Sí, a través de un proveedor tecnológico autorizado por la DIAN, que se conecta cuando el sistema se instala en el local. Si el cliente pide la factura a su nombre, se pone su NIT o cédula en el cobro. En la demo la factura es de prueba: se numera y lleva su código QR, pero no se envía a la DIAN."],
   ["¿Cómo sabe lo que cuesta cada turno?", "Con el salario o el valor de la hora de cada persona y las horas que marca con su PIN. Suma los recargos nocturnos, dominicales y festivos de la ley vigente, la seguridad social y las prestaciones. Es una estimación para decidir turnos: la nómina la liquida tu contador."],

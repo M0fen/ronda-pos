@@ -1,11 +1,12 @@
 import "server-only";
 import { balance, checkTotals, type CheckTotals } from "../core/pricing";
 import { minutesSince } from "../core/time";
-import { authorizeWithPin, can, type Staff } from "./auth";
+import { can, requireAuth, verifyAuthorizer, type AuthInput, type Staff } from "./auth";
 import { CHANNEL_SHORT } from "../settings";
 import { audit, bump, getBusiness, nextNumber } from "./business";
 import { getDb, type Tx } from "./db";
 import { UserError } from "./errors";
+import { cop } from "../money";
 import { loadMenu, priceItem, type ChosenItem } from "./menu";
 
 export interface Mod {
@@ -128,7 +129,7 @@ export async function loadCheck(bizId: string, checkId: string, tx?: Tx): Promis
     db.query<CheckItem>(`${ITEM_SELECT} where check_id = $1 order by created_at, id`, [checkId]),
     db.query<PaymentRow>("select id, method, amount, tip, received, reference, part, status, created_at from payments where check_id = $1 order by created_at", [checkId]),
     check.customer_id ? db.one<CheckView["customer"]>("select id, name, phone, stamps, visits from customers where id = $1", [check.customer_id]) : Promise.resolve(null),
-    db.one<CheckView["invoice"]>("select id, number, prefix, public_token from invoices where check_id = $1 order by created_at desc limit 1", [checkId]),
+    db.one<CheckView["invoice"]>("select id, number, prefix, public_token from invoices where check_id = $1 and voided_at is null order by created_at desc limit 1", [checkId]),
   ]);
   const totals = totalsFor(items, check.discount_pct);
   const ok = payments.filter((p) => p.status === "ok");
@@ -186,6 +187,18 @@ export async function openChecks(bizId: string): Promise<CheckSummary[]> {
   });
 }
 
+/** Ventas netas (sin impuesto) de lo que se está consumiendo en las cuentas abiertas: lo enviado, sin borradores. */
+export async function openNetSales(bizId: string) {
+  const checks = await openChecks(bizId);
+  if (!checks.length) return 0;
+  const db = await getDb();
+  const items = await db.query<CheckItem & { check_id: string }>(
+    `${ITEM_SELECT.replace("select id,", "select check_id, id,")} where check_id = any($1::uuid[]) and status in ('sent','ready','delivered')`,
+    [checks.map((c) => c.id)],
+  );
+  return checks.reduce((sum, c) => sum + totalsFor(items.filter((i) => i.check_id === c.id), c.discount_pct).base, 0);
+}
+
 export interface TableView {
   id: string;
   name: string;
@@ -238,8 +251,8 @@ export async function floorState(bizId: string) {
 }
 
 async function editableCheck(tx: Tx, bizId: string, checkId: string) {
-  const check = await tx.one<{ id: string; status: string; number: number; discount_pct: number }>(
-    "select id, status, number, discount_pct from checks where id = $1 and business_id = $2 for update",
+  const check = await tx.one<{ id: string; status: string; number: number; discount_pct: number; kind: CheckRow["kind"] }>(
+    "select id, status, number, discount_pct, kind from checks where id = $1 and business_id = $2 for update",
     [checkId, bizId],
   );
   if (!check) throw new UserError("Cuenta no encontrada");
@@ -247,12 +260,30 @@ async function editableCheck(tx: Tx, bizId: string, checkId: string) {
   return check;
 }
 
+/** Nada puede dejar lo pagado por encima del total: primero se quita un pago. Se llama después del cambio, en la misma transacción. */
+export async function assertNotOverpaid(tx: Tx, bizId: string, checkId: string) {
+  const check = await loadCheck(bizId, checkId, tx);
+  if (check && check.paid > check.totals.total) {
+    throw new UserError(`Ya se pagaron ${cop(check.paid)} y la cuenta quedaría en ${cop(check.totals.total)}. Quita un pago antes de hacer este cambio.`);
+  }
+}
+
+/** Un domicilio ya empacado que cambia vuelve a "Para empacar": la bolsa se revisa otra vez. */
+export async function reopenBag(tx: Tx, bizId: string, checkId: string, staffId: string) {
+  const rows = await tx.query<{ id: string }>(
+    "update checks set delivery = delivery - 'packedAt' - 'packedBy' - 'checklist' where id = $1 and kind = 'domicilio' and delivery ? 'packedAt' returning id",
+    [checkId],
+  );
+  if (rows.length) await audit(tx, bizId, staffId, "bag_reopened", { check: checkId });
+}
+
 export async function openCheck(staff: Staff, input: { tableId?: string | null; kind: "mesa" | "barra" | "llevar"; name?: string; guests?: number }) {
   const db = await getDb();
   return db.tx(async (tx) => {
     if (input.kind === "mesa") {
       if (!input.tableId) throw new UserError("Elige una mesa");
-      const table = await tx.one<{ id: string }>("select id from floor_tables where id = $1 and business_id = $2", [input.tableId, staff.business_id]);
+      // Bloquea la mesa: dos meseros a la vez no abren dos cuentas en la misma mesa
+      const table = await tx.one<{ id: string }>("select id from floor_tables where id = $1 and business_id = $2 and active for update", [input.tableId, staff.business_id]);
       if (!table) throw new UserError("Mesa no encontrada");
       const existing = await tx.one<{ id: string }>("select id from checks where table_id = $1 and status in ('open','bill')", [input.tableId]);
       if (existing) return existing.id;
@@ -300,6 +331,7 @@ export async function addItems(staff: Staff, checkId: string, chosen: ChosenItem
       }
     }
     await t.query("update checks set updated_at = now() where id = $1", [checkId]);
+    await reopenBag(t, staff.business_id, checkId, staff.id);
   };
   if (tx) return run(tx);
   const db = await getDb();
@@ -323,7 +355,7 @@ export async function changeDraft(staff: Staff, itemId: string, patch: { qty?: n
 }
 
 /** Descuenta (o devuelve) insumos según las recetas. */
-export async function moveStock(tx: Tx, bizId: string, items: { product_id: string | null; qty: number }[], sign: -1 | 1, reason: "venta" | "anulacion", ref: string, staffId: string) {
+export async function moveStock(tx: Tx, bizId: string, items: { product_id: string | null; qty: number }[], sign: -1 | 1, reason: "venta" | "anulacion", ref: string, staffId: string | null) {
   const ids = [...new Set(items.map((i) => i.product_id).filter((x): x is string => !!x))];
   if (!ids.length) return;
   const recipe = await tx.query<{ product_id: string; ingredient_id: string; qty: number }>(
@@ -365,15 +397,11 @@ export async function sendRound(staff: Staff, checkId: string) {
   });
 }
 
-async function authorizer(tx: Tx, staff: Staff, needed: boolean, pin?: string) {
-  if (!needed) return staff;
-  if (!pin) throw new UserError("Necesita autorización: pide el PIN del encargado", { auth: "1" });
-  return authorizeWithPin(staff.business_id, pin, tx);
-}
-
-export async function voidItem(staff: Staff, itemId: string, input: { reason: string; waste: boolean; pin?: string }) {
+export async function voidItem(staff: Staff, itemId: string, input: { reason: string; waste: boolean; auth?: AuthInput | null }) {
   const reason = input.reason.trim().slice(0, 120);
   if (reason.length < 3) throw new UserError("Escribe el motivo de la anulación");
+  // La autorización se verifica antes: así un PIN equivocado cuenta como intento aunque la acción no siga
+  const authorizedBy = await verifyAuthorizer(staff, input.auth, "void");
   const db = await getDb();
   const biz = await getBusiness(staff.business_id);
   return db.tx(async (tx) => {
@@ -385,42 +413,53 @@ export async function voidItem(staff: Staff, itemId: string, input: { reason: st
       await tx.query("delete from check_items where id = $1", [itemId]);
       return { alert: false };
     }
-    const amount = (item.unit_price + item.modifiers.reduce((s, m) => s + m.price, 0)) * item.qty;
-    const who = await authorizer(tx, staff, !can.voidSent(staff), input.pin);
+    const amount = item.courtesy ? 0 : (item.unit_price + item.modifiers.reduce((s, m) => s + m.price, 0)) * item.qty;
+    const who = requireAuth(!can.voidSent(staff), staff, authorizedBy, "void");
     await tx.query("update check_items set status = 'void', void_reason = $2, void_by = $3, void_waste = $4 where id = $1", [itemId, reason, who.id, input.waste]);
     if (!input.waste) await moveStock(tx, staff.business_id, [item], 1, "anulacion", `Cuenta ${check.number}`, staff.id);
+    await assertNotOverpaid(tx, staff.business_id, item.check_id);
+    await reopenBag(tx, staff.business_id, item.check_id, staff.id);
     await audit(tx, staff.business_id, staff.id, "void", { item: item.name, qty: item.qty, check: check.number, reason, authorizedBy: who.name, waste: input.waste }, amount);
     await bump(tx, staff.business_id);
     return { alert: amount >= biz.settings.alerts.voidLimit };
   });
 }
 
-export async function toggleCourtesy(staff: Staff, itemId: string, pin?: string) {
+export async function toggleCourtesy(staff: Staff, itemId: string, auth?: AuthInput | null) {
+  const authorizedBy = await verifyAuthorizer(staff, auth, "manage");
   const db = await getDb();
   await db.tx(async (tx) => {
-    const item = await tx.one<{ check_id: string; courtesy: boolean; name: string; unit_price: number; qty: number; status: string }>(
-      "select check_id, courtesy, name, unit_price, qty, status from check_items where id = $1 and business_id = $2",
+    const item = await tx.one<{ check_id: string; courtesy: boolean; name: string; unit_price: number; qty: number; status: string; modifiers: Mod[] }>(
+      "select check_id, courtesy, name, unit_price, qty, status, modifiers from check_items where id = $1 and business_id = $2",
       [itemId, staff.business_id],
     );
     if (!item || item.status === "void") throw new UserError("Ítem no encontrado");
     const check = await editableCheck(tx, staff.business_id, item.check_id);
-    const who = await authorizer(tx, staff, !can.manage(staff), pin);
+    const who = requireAuth(!can.manage(staff), staff, authorizedBy, "manage");
     await tx.query("update check_items set courtesy = not courtesy where id = $1", [itemId]);
-    await audit(tx, staff.business_id, staff.id, item.courtesy ? "courtesy_off" : "courtesy", { item: item.name, check: check.number, authorizedBy: who.name }, item.unit_price * item.qty);
+    await assertNotOverpaid(tx, staff.business_id, item.check_id);
+    const amount = (item.unit_price + item.modifiers.reduce((s, m) => s + m.price, 0)) * item.qty;
+    await audit(tx, staff.business_id, staff.id, item.courtesy ? "courtesy_off" : "courtesy", { item: item.name, check: check.number, authorizedBy: who.name }, amount);
     await bump(tx, staff.business_id);
   });
 }
 
-export async function setDiscount(staff: Staff, checkId: string, input: { pct: number; reason: string; pin?: string }) {
-  const pct = Math.min(100, Math.max(0, Math.round(input.pct)));
+export async function setDiscount(staff: Staff, checkId: string, input: { pct: number; reason: string; auth?: AuthInput | null }) {
+  const pct = Math.min(100, Math.max(0, Math.round(Number(input.pct) || 0)));
+  const reason = (input.reason ?? "").trim().slice(0, 120);
+  if (pct > 0 && reason.length < 3) throw new UserError("Escribe el motivo del descuento");
   const biz = await getBusiness(staff.business_id);
+  const authorizedBy = await verifyAuthorizer(staff, input.auth, "manage");
   const db = await getDb();
   await db.tx(async (tx) => {
     const check = await editableCheck(tx, staff.business_id, checkId);
-    if (pct > 0 && input.reason.trim().length < 3) throw new UserError("Escribe el motivo del descuento");
-    const who = await authorizer(tx, staff, pct > biz.settings.alerts.discountLimitPct && !can.manage(staff), input.pin);
-    await tx.query("update checks set discount_pct = $2, discount_reason = $3, updated_at = now() where id = $1", [checkId, pct, pct ? input.reason.trim().slice(0, 120) : null]);
-    await audit(tx, staff.business_id, staff.id, "discount", { check: check.number, pct, reason: input.reason, authorizedBy: who.name });
+    const who = requireAuth(pct > biz.settings.alerts.discountLimitPct && !can.manage(staff), staff, authorizedBy, "manage");
+    const before = check.discount_pct;
+    await tx.query("update checks set discount_pct = $2, discount_reason = $3, updated_at = now() where id = $1", [checkId, pct, pct ? reason : null]);
+    await assertNotOverpaid(tx, staff.business_id, checkId);
+    // Queda el valor en pesos del descuento: sale en el panel junto a cortesías y anulaciones
+    const after = await loadCheck(staff.business_id, checkId, tx);
+    await audit(tx, staff.business_id, staff.id, "discount", { check: check.number, pct, from: before, reason, authorizedBy: who.name }, after?.totals.discount ?? 0);
     await bump(tx, staff.business_id);
   });
 }
@@ -435,11 +474,13 @@ export async function setBillRequested(staff: Staff, checkId: string, on: boolea
   });
 }
 
-export async function markDelivered(staff: Staff, checkId: string) {
+/** Marca entregado lo que estaba listo: un producto, o todo lo listo de la cuenta. */
+export async function markDelivered(staff: Staff, checkId: string, itemId?: string | null) {
   const db = await getDb();
   await db.tx(async (tx) => {
     await editableCheck(tx, staff.business_id, checkId);
-    await tx.query("update check_items set status = 'delivered', delivered_at = now() where check_id = $1 and status = 'ready'", [checkId]);
+    if (itemId) await tx.query("update check_items set status = 'delivered', delivered_at = now() where id = $2 and check_id = $1 and status = 'ready'", [checkId, itemId]);
+    else await tx.query("update check_items set status = 'delivered', delivered_at = now() where check_id = $1 and status = 'ready'", [checkId]);
     await bump(tx, staff.business_id);
   });
 }
@@ -447,10 +488,13 @@ export async function markDelivered(staff: Staff, checkId: string) {
 export async function updateCheckMeta(staff: Staff, checkId: string, patch: { guests?: number; name?: string; tableId?: string }) {
   const db = await getDb();
   await db.tx(async (tx) => {
-    await editableCheck(tx, staff.business_id, checkId);
+    const current = await editableCheck(tx, staff.business_id, checkId);
     if (patch.guests !== undefined) await tx.query("update checks set guests = $2 where id = $1", [checkId, Math.min(40, Math.max(1, Math.floor(patch.guests)))]);
     if (patch.name !== undefined) await tx.query("update checks set name = $2 where id = $1", [checkId, patch.name.trim().slice(0, 40)]);
     if (patch.tableId) {
+      if (current.kind === "domicilio") throw new UserError("Un domicilio no se puede pasar a una mesa");
+      const table = await tx.one("select 1 from floor_tables where id = $1 and business_id = $2 and active for update", [patch.tableId, staff.business_id]);
+      if (!table) throw new UserError("Mesa no encontrada");
       const busy = await tx.one("select 1 from checks where table_id = $1 and status in ('open','bill') and id <> $2", [patch.tableId, checkId]);
       if (busy) throw new UserError("Esa mesa ya tiene una cuenta abierta");
       await tx.query("update checks set table_id = $2, kind = 'mesa' where id = $1", [checkId, patch.tableId]);
@@ -464,11 +508,16 @@ export async function updateCheckMeta(staff: Staff, checkId: string, patch: { gu
 export async function discardCheck(staff: Staff, checkId: string) {
   const db = await getDb();
   await db.tx(async (tx) => {
-    await editableCheck(tx, staff.business_id, checkId);
+    const check = await editableCheck(tx, staff.business_id, checkId);
     const sent = await tx.one("select 1 from check_items where check_id = $1 and status not in ('draft','void')", [checkId]);
     if (sent) throw new UserError("Tiene productos enviados: anúlalos primero");
-    await tx.query("delete from check_items where check_id = $1", [checkId]);
+    const paid = await tx.one("select 1 from payments where check_id = $1 and status in ('ok','pending')", [checkId]);
+    if (paid) throw new UserError("Tiene pagos registrados: quítalos antes de descartarla");
+    // Solo se borran los borradores; lo anulado queda como registro
+    const drafts = await tx.query<{ id: string }>("delete from check_items where check_id = $1 and status = 'draft' returning id", [checkId]);
     await tx.query("update checks set status = 'void', closed_at = now(), closed_by = $2 where id = $1", [checkId, staff.id]);
+    await tx.query("update requests set status = 'done', handled_by = $2, handled_at = now() where check_id = $1 and status = 'pending'", [checkId, staff.id]);
+    await audit(tx, staff.business_id, staff.id, "discard", { check: check.number, drafts: drafts.length });
     await bump(tx, staff.business_id);
   });
 }
@@ -490,16 +539,28 @@ export interface Ticket {
   riderAt: string | null;
 }
 
+const GRAMS = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 });
+
 export async function kdsBoard(bizId: string, station: string | null) {
   const db = await getDb();
   const rows = await db.query<
-    CheckItem & { check_id: string; kind: CheckRow["kind"]; channel: string; delivery: Delivery | null; table_name: string | null; check_name: string; number: number; waiter: string | null; ficha: string | null }
+    CheckItem & {
+      check_id: string;
+      kind: CheckRow["kind"];
+      channel: string;
+      delivery: Delivery | null;
+      table_name: string | null;
+      check_name: string;
+      number: number;
+      waiter: string | null;
+      ficha: { q: number; u: string; n: string }[] | null;
+    }
   >(
     `select i.id, i.check_id, i.name, i.qty, i.modifiers, i.note, i.status, i.round, i.station, i.sent_at, i.ready_at, i.source,
             c.kind, c.channel, c.delivery, t.name as table_name, c.name as check_name, c.number, s.name as waiter,
             -- Ficha técnica: los gramajes de la receta, para que salga igual en todas las sedes
             case when i.station = 'cocina' then (
-              select string_agg(trim(to_char(r.qty, 'FM99990.##')) || ' ' || g.unit || ' ' || lower(g.name), ' · ' order by r.qty desc)
+              select json_agg(json_build_object('q', r.qty, 'u', g.unit, 'n', lower(g.name)) order by r.qty desc)
                 from recipe_items r join ingredients g on g.id = r.ingredient_id where r.product_id = i.product_id
             ) end as ficha
        from check_items i
@@ -507,8 +568,9 @@ export async function kdsBoard(bizId: string, station: string | null) {
        left join floor_tables t on t.id = c.table_id
        left join staff s on s.id = c.opened_by
       where i.business_id = $1
-        -- En el mostrador se cobra antes de preparar: la cuenta pagada sigue en cocina hasta que se entrega
-        and (c.status in ('open','bill') or (c.status = 'paid' and c.kind = 'llevar' and c.closed_at > now() - interval '4 hours'))
+        and i.sent_at > now() - interval '12 hours'
+        -- Cobrar no saca nada de la cocina: lo pagado que falta sigue en pantalla hasta que se entrega
+        and (c.status in ('open','bill') or (c.status = 'paid' and c.closed_at > now() - interval '4 hours'))
         and (i.status in ('sent','ready') or (i.status = 'delivered' and i.delivered_at > now() - interval '15 minutes'))
         ${station ? "and i.station = $2" : ""}
       order by i.sent_at, i.id`,
@@ -529,7 +591,9 @@ export async function kdsBoard(bizId: string, station: string | null) {
       sentAt: r.sent_at!,
       items: [],
     };
-    t.items.push({ id: r.id, name: r.name, qty: r.qty, modifiers: r.modifiers, note: r.note, status: r.status, source: r.source, ficha: r.ficha });
+    // Los gramajes se escriben aquí y no en SQL: 22,5 g sale como 22,5 (no como 23)
+    const ficha = r.ficha?.length ? r.ficha.map((x) => `${GRAMS.format(Number(x.q))} ${x.u} ${x.n}`).join(" · ") : null;
+    t.items.push({ id: r.id, name: r.name, qty: r.qty, modifiers: r.modifiers, note: r.note, status: r.status, source: r.source, ficha });
     tickets.set(key, t);
   }
   const all = [...tickets.values()];
@@ -544,32 +608,38 @@ export async function kdsBoard(bizId: string, station: string | null) {
   return { active, ready, done, avgMinutes: avg?.m ? Number(avg.m) : null };
 }
 
-export async function kdsSetItem(staff: Staff, itemId: string, status: "sent" | "ready" | "delivered") {
+/** Barra y cocina solo mueven lo que está en preparación: enviado ↔ listo. Nada más (ni anular ni volver a borrador). */
+export async function kdsSetItem(staff: Staff, itemId: string, status: "sent" | "ready") {
+  if (status !== "sent" && status !== "ready") throw new UserError("Ese cambio no se puede hacer desde barra y cocina");
   const db = await getDb();
   await db.tx(async (tx) => {
-    const item = await tx.one<{ status: string }>("select status from check_items where id = $1 and business_id = $2", [itemId, staff.business_id]);
-    if (!item || item.status === "void" || item.status === "draft") throw new UserError("Ese ítem ya no está en preparación");
-    await tx.query(
-      `update check_items set status = $2,
-              ready_at = case when $2 = 'ready' then now() when $2 = 'sent' then null else ready_at end,
-              delivered_at = case when $2 = 'delivered' then now() else null end
-        where id = $1`,
-      [itemId, status],
+    const item = await tx.one<{ status: string; check_status: string }>(
+      "select i.status, c.status as check_status from check_items i join checks c on c.id = i.check_id where i.id = $1 and i.business_id = $2 for update of i",
+      [itemId, staff.business_id],
     );
+    const allowed = item && item.check_status !== "void" && ((item.status === "sent" && status === "ready") || (item.status === "ready" && status === "sent"));
+    if (!allowed) throw new UserError("Ese producto ya no está en preparación");
+    await tx.query("update check_items set status = $2, ready_at = case when $2 = 'ready' then now() else null end where id = $1", [itemId, status]);
     await bump(tx, staff.business_id);
   });
 }
 
+/** Tiquete completo: listo (enviado → listo), entregado (listo → entregado) o devolver a listos (entregado → listo). */
 export async function kdsBumpTicket(staff: Staff, checkId: string, round: number, station: string, status: "ready" | "delivered" | "recall") {
+  const moves = { ready: { from: "sent", to: "ready" }, delivered: { from: "ready", to: "delivered" }, recall: { from: "delivered", to: "ready" } } as const;
+  const move = moves[status as keyof typeof moves];
+  if (!move) throw new UserError("Ese cambio no se puede hacer desde barra y cocina");
   const db = await getDb();
   await db.tx(async (tx) => {
-    // "recall" devuelve a listos un tiquete que se marcó entregado por error
-    const from = status === "ready" ? ["sent"] : status === "recall" ? ["delivered"] : ["sent", "ready"];
-    const to = status === "recall" ? "ready" : status;
+    const check = await tx.one<{ kind: string; status: string }>("select kind, status from checks where id = $1 and business_id = $2 for update", [checkId, staff.business_id]);
+    if (!check || check.status === "void") throw new UserError("Esa cuenta ya no está");
+    // Un domicilio se entrega al empacarlo y revisar la bolsa, no desde la cocina
+    if (check.kind === "domicilio" && move.to === "delivered") throw new UserError("Los domicilios se entregan desde Domicilios, al revisar la bolsa");
     await tx.query(
-      `update check_items set status = $5, ready_at = coalesce(ready_at, now()), delivered_at = case when $5 = 'delivered' then now() else null end
-        where check_id = $1 and round = $2 and station = $3 and business_id = $4 and status = any($6::text[])`,
-      [checkId, round, station, staff.business_id, to, from],
+      `update check_items set status = $5, ready_at = case when $5 = 'ready' then coalesce(ready_at, now()) else ready_at end,
+              delivered_at = case when $5 = 'delivered' then now() else null end
+        where check_id = $1 and round = $2 and station = $3 and business_id = $4 and status = $6`,
+      [checkId, Math.floor(Number(round)), String(station), staff.business_id, move.to, move.from],
     );
     await bump(tx, staff.business_id);
   });

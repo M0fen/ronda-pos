@@ -3,8 +3,7 @@
 import { ArrowLeft, Banknote, Check, CreditCard, Gift, Landmark, Smartphone, Trash2, UserRound, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import QRCode from "qrcode";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { closeCheckAction, paymentAction, redeemRewardAction, removePaymentAction, reviewClientPaymentAction } from "@/app/(pos)/actions";
 import { btn, Money, Pill } from "@/components/ui";
 import { cashSuggestions, splitEqual, suggestedTip } from "@/lib/core/pricing";
@@ -12,12 +11,16 @@ import type { CheckView } from "@/lib/server/checks";
 import { cop } from "@/lib/money";
 import { METHOD_LABEL } from "@/lib/settings";
 import { cn } from "@/lib/utils";
+import { AuthSheet, type AuthLevel, type AuthRequest, type Authorizer } from "./auth-sheet";
 import { Keypad } from "./keypad";
+import { Sheet } from "./sheet";
 import { report, toast } from "./toast";
 
 type Method = "efectivo" | "tarjeta" | "nequi" | "breb" | "daviplata";
+type Result = { ok: boolean; error?: string; message?: string; fields?: Record<string, string> };
+type Auth = { id: string; pin: string };
 
-const ICONS: Record<Method, React.ReactNode> = {
+const ICONS: Record<string, React.ReactNode> = {
   efectivo: <Banknote size={20} />,
   tarjeta: <CreditCard size={20} />,
   nequi: <Smartphone size={20} />,
@@ -25,11 +28,18 @@ const ICONS: Record<Method, React.ReactNode> = {
   daviplata: <Wallet size={20} />,
 };
 
+/** Hasta 8 cifras: la tecla "000" no se pasa de ahí */
+const typeAmount = (r: string, k: string) => (k === "del" ? r.slice(0, -1) : k === "000" ? (r ? `${r}000` : "") : r + k).slice(0, 8);
+
+type SplitState = { split: "una" | "iguales" | "consumo"; parts: number; owner: Record<string, number> };
+
 export function PaymentScreen({
   check,
   cashOpen,
   canRemove,
   config,
+  authorizers,
+  meId,
 }: {
   check: CheckView;
   cashOpen: boolean;
@@ -42,18 +52,23 @@ export function PaymentScreen({
     loyalty: { enabled: boolean; goal: number; reward: string; rewardMax: number };
     taxLabel: string;
   };
+  authorizers: Authorizer[];
+  meId: string;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const total = check.totals.total;
+  const free = total === 0;
+  const tipsOn = config.tips.enabled && !free;
   const suggested = suggestedTip(total, config.tips.suggestedPct);
   const [tipMode, setTipMode] = useState<"si" | "otro" | "no" | null>((check.tip_answer as "si" | "no" | null) ?? (check.tips ? "si" : null));
-  const [customTip, setCustomTip] = useState(0);
-  const tipTotal = tipMode === "si" ? suggested : tipMode === "otro" ? customTip : 0;
+  const [customTip, setCustomTip] = useState("");
+  const tipTotal = tipMode === "si" ? suggested : tipMode === "otro" ? parseInt(customTip || "0", 10) : 0;
   const tipPaid = check.tips;
-  const [split, setSplit] = useState<"una" | "iguales" | "consumo">("una");
-  const [parts, setParts] = useState(2);
-  const [owner, setOwner] = useState<Record<string, number>>({});
+  const [{ split, parts, owner }, setSplitState] = useState<SplitState>({ split: "una", parts: 2, owner: {} });
+  const setSplit = (v: SplitState["split"]) => setSplitState((s) => ({ ...s, split: v }));
+  const setParts = (v: number) => setSplitState((s) => ({ ...s, parts: v }));
+  const setOwner = (fn: (o: Record<string, number>) => Record<string, number>) => setSplitState((s) => ({ ...s, owner: fn(s.owner) }));
   const [part, setPart] = useState(0);
   const [method, setMethod] = useState<Method>(config.methods[0] ?? "efectivo");
   const [received, setReceived] = useState("");
@@ -64,10 +79,32 @@ export function PaymentScreen({
   const [docName, setDocName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [birthday, setBirthday] = useState("");
   const [consent, setConsent] = useState(false);
-  const [qr, setQr] = useState("");
+  const [tipConfirm, setTipConfirm] = useState(false);
+  const [removing, setRemoving] = useState<{ id: string; label: string } | null>(null);
+  const [removeReason, setRemoveReason] = useState("");
+  const [auth, setAuth] = useState<(AuthRequest & { run: (a: Auth) => Promise<Result>; done: string }) | null>(null);
+  const payPanel = useRef<HTMLDivElement>(null);
+
+  // La división se guarda en este dispositivo: si la página se recarga a mitad del cobro, no se pierde
+  const splitKey = `ronda-split:${check.id}`;
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(splitKey) ?? "null") as SplitState | null;
+      if (saved && ["una", "iguales", "consumo"].includes(saved.split)) setSplitState({ split: saved.split, parts: Math.min(6, Math.max(2, saved.parts || 2)), owner: saved.owner ?? {} });
+    } catch {}
+  }, [splitKey]);
+  useEffect(() => {
+    try {
+      if (split === "una") localStorage.removeItem(splitKey);
+      else localStorage.setItem(splitKey, JSON.stringify({ split, parts, owner }));
+    } catch {}
+  }, [split, parts, owner, splitKey]);
 
   const payable = check.items.filter((i) => i.status !== "void" && !i.courtesy);
+  const pendingTotal = check.pendingPayments.reduce((s, p) => s + p.amount, 0);
+  const due = Math.max(0, check.due - pendingTotal);
 
   // Lo que le toca a cada parte (sin propina) y su propina
   const shares = useMemo(() => {
@@ -94,8 +131,8 @@ export function PaymentScreen({
 
   const paidByPart = (label: string) => check.payments.filter((p) => p.part === label).reduce((s, p) => s + p.amount, 0);
   const current = shares[Math.min(part, shares.length - 1)]!;
-  const currentLeft = split === "una" ? check.due : Math.max(0, current.amount - paidByPart(current.label));
-  const amount = customAmount !== null ? Math.min(check.due, parseInt(customAmount || "0", 10)) : Math.min(check.due, currentLeft);
+  const currentLeft = split === "una" ? due : Math.max(0, current.amount - paidByPart(current.label));
+  const amount = customAmount !== null ? Math.min(due, parseInt(customAmount || "0", 10)) : Math.min(due, currentLeft);
   const tipNow = split === "una" ? Math.max(0, tipTotal - tipPaid) : Math.max(0, current.tip - check.payments.filter((p) => p.part === current.label).reduce((s, p) => s + p.tip, 0));
   const charge = amount + (amount > 0 ? tipNow : 0);
   const receivedNum = parseInt(received || "0", 10);
@@ -105,54 +142,106 @@ export function PaymentScreen({
     setReceived("");
     setReference("");
   }, [method, part, split]);
+  useEffect(() => setTipConfirm(false), [tipTotal]);
 
-  useEffect(() => {
-    if (method !== "breb" && method !== "nequi") return setQr("");
-    const text = method === "breb" ? `Bre-B ${config.brebKey} valor ${charge}` : `Nequi ${config.nequiPhone} valor ${charge}`;
-    QRCode.toString(text, { type: "svg", margin: 1, color: { dark: "#24150F", light: "#FFFFFF" } }).then(setQr).catch(() => setQr(""));
-  }, [method, charge, config.brebKey, config.nequiPhone]);
+  const hasDrafts = check.items.some((i) => i.status === "draft");
+  const chargeable = check.items.some((i) => i.status !== "draft" && i.status !== "void");
+  const done = check.due === 0 && chargeable && !check.pendingPayments.length;
+  const waiting = check.pendingPayments.length > 0;
 
-  function pay() {
-    if (!tipMode && config.tips.enabled) return toast("Primero pregunta si incluye la propina", { tone: "error" });
+  function register(after?: (r: Result) => void, receivedValue?: number) {
+    if (!tipMode && tipsOn) return toast("Primero pregunta si incluye la propina", { tone: "error" });
     if (amount <= 0) return toast("No hay nada por cobrar en esta parte", { tone: "error" });
     start(async () => {
       const r = await paymentAction(check.id, {
         method,
         amount,
         tip: tipNow,
-        received: method === "efectivo" ? receivedNum || charge : null,
+        received: method === "efectivo" ? (receivedValue ?? (receivedNum || charge)) : null,
         reference,
         part: current.label,
+        confirmTip: tipConfirm,
       });
+      if (!r.ok && r.fields?.tipConfirm) {
+        setTipConfirm(true);
+        report(r);
+        return;
+      }
       if (r.ok && r.data) {
         toast(r.data.change > 0 ? `Pago registrado. Vueltas: ${cop(r.data.change)}` : "Pago registrado");
         setCustomAmount(null);
         if (split !== "una" && part < shares.length - 1) setPart(part + 1);
         router.refresh();
+        after?.(r);
       } else report(r);
     });
+  }
+
+  function closeInput() {
+    return {
+      tipAnswer: (tipTotal > 0 || tipPaid > 0 ? "si" : "no") as "si" | "no",
+      invoice: { kind: invoice, doc, name: docName, email },
+      customer: phone.trim() ? { phone, consent, birthday: birthday || undefined } : null,
+    };
+  }
+
+  function finish(r: { ok: boolean; data?: { invoiceId: string | null; stamps: number } }) {
+    try {
+      localStorage.removeItem(splitKey);
+    } catch {}
+    if (r.data?.stamps) toast(`Cuenta cerrada · +${r.data.stamps} sello`);
+    if (r.data?.invoiceId) router.push(`/recibo/${check.id}?nuevo=1`);
+    else {
+      toast("Cuenta cerrada sin factura: todo fue cortesía");
+      router.push(check.kind === "domicilio" ? "/domicilios" : "/salon");
+    }
   }
 
   function close() {
-    if (config.tips.enabled && !tipMode) return toast("Pregunta al cliente si incluye la propina", { tone: "error" });
+    if (tipsOn && !tipMode) return toast("Pregunta al cliente si incluye la propina", { tone: "error" });
     start(async () => {
-      const r = await closeCheckAction(check.id, {
-        tipAnswer: tipTotal > 0 || tipPaid > 0 ? "si" : "no",
-        invoice: { kind: invoice, doc, name: docName, email },
-        customer: phone.replace(/\D/g, "").length === 10 ? { phone, consent } : null,
-      });
-      if (r.ok) {
-        if (r.data?.stamps) toast(`Cuenta cerrada · +${r.data.stamps} sello`);
-        router.push(`/recibo/${check.id}?nuevo=1`);
-      } else report(r);
+      const r = await closeCheckAction(check.id, closeInput());
+      if (r.ok) finish(r);
+      else report(r);
     });
   }
 
-  const done = check.due === 0 && total > 0;
-  const hasDrafts = check.items.some((i) => i.status === "draft");
+  /** Lo más rápido en el mostrador: efectivo exacto, se registra y se cierra de una vez. */
+  function exactCash() {
+    if (tipsOn && !tipMode) return toast("Primero pregunta si incluye la propina", { tone: "error" });
+    start(async () => {
+      const p = await paymentAction(check.id, { method: "efectivo", amount: due, tip: Math.max(0, tipTotal - tipPaid), received: due + Math.max(0, tipTotal - tipPaid), part: "", confirmTip: tipConfirm });
+      if (!report(p)) {
+        if (!p.ok && p.fields?.tipConfirm) setTipConfirm(true);
+        return;
+      }
+      const r = await closeCheckAction(check.id, closeInput());
+      if (r.ok) finish(r);
+      else {
+        report(r);
+        router.refresh();
+      }
+    });
+  }
+
+  function removePayment() {
+    const target = removing!;
+    const reason = removeReason;
+    const action = (a?: Auth) => removePaymentAction(target.id, { reason, auth: a });
+    start(async () => {
+      const r = await action();
+      if (!r.ok && r.fields?.auth) return setAuth({ label: `Quitar el pago de ${target.label}`, level: r.fields.auth as AuthLevel, run: action, done: "Pago quitado" });
+      if (report(r)) {
+        setRemoving(null);
+        router.refresh();
+      }
+    });
+  }
+
+  const canExact = !done && !waiting && split === "una" && customAmount === null && config.methods.includes("efectivo") && cashOpen && due > 0 && !hasDrafts;
 
   return (
-    <div className="mx-auto grid max-w-[1400px] gap-4 px-3 py-4 sm:px-5 lg:grid-cols-[1fr_1.1fr]">
+    <div className="mx-auto grid max-w-[1400px] gap-4 px-3 py-4 pb-28 sm:px-5 lg:grid-cols-[1fr_1.1fr] lg:pb-4">
       {/* Resumen, propina, división, cliente y factura */}
       <section className="space-y-4">
         <div className="flex items-center gap-2">
@@ -167,6 +256,7 @@ export function PaymentScreen({
           </div>
         </div>
         {hasDrafts ? <p className="rounded-2xl bg-cereza-soft px-4 py-3 font-semibold text-cereza">Hay productos sin enviar. Envíalos o quítalos antes de cobrar.</p> : null}
+        {!cashOpen && !done ? <p className="rounded-2xl bg-fachada-soft px-4 py-3 font-semibold text-[#6b4b00]">La caja está cerrada: ábrela en Caja para cobrar. Así cada pago queda en un cierre.</p> : null}
 
         <div className="rounded-3xl bg-papel p-4 ring-1 ring-linea">
           <ul className="divide-y divide-linea">
@@ -214,7 +304,7 @@ export function PaymentScreen({
           </dl>
         </div>
 
-        {config.tips.enabled ? (
+        {tipsOn ? (
           <div className="rounded-3xl bg-papel p-4 ring-1 ring-linea">
             <p className="font-bold">¿Incluye la propina voluntaria?</p>
             <p className="text-sm text-humo">Hay que preguntarle al cliente. La sugerida es del {config.tips.suggestedPct} % y no hace parte del impuesto.</p>
@@ -230,68 +320,77 @@ export function PaymentScreen({
               </button>
             </div>
             {tipMode === "otro" ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {[2000, 5000, 10000, 20000].map((v) => (
-                  <button key={v} onClick={() => setCustomTip(v)} className={cn("h-11 rounded-xl px-4 font-semibold ring-1 tnum", customTip === v ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
-                    {cop(v)}
-                  </button>
-                ))}
+              <div className="mt-3">
+                <p className="text-center text-3xl font-bold tnum">{cop(parseInt(customTip || "0", 10))}</p>
+                <div className="mt-2 flex flex-wrap justify-center gap-2">
+                  {[2000, 5000, 10000].map((v) => (
+                    <button key={v} onClick={() => setCustomTip(String(v))} className="h-10 rounded-xl px-3 font-semibold ring-1 ring-linea-2 tnum">
+                      {cop(v)}
+                    </button>
+                  ))}
+                </div>
+                <div className="mx-auto mt-3 max-w-xs">
+                  <Keypad onKey={(k) => setCustomTip((r) => typeAmount(r, k).slice(0, 7))} extra={{ label: "000", value: "000" }} />
+                </div>
+                {tipConfirm ? <p className="mt-3 rounded-xl bg-fachada-soft px-3 py-2 text-sm font-semibold text-[#6b4b00]">Es más del 20 % de la cuenta. Si el cliente la confirma, vuelve a registrar el pago.</p> : null}
               </div>
             ) : null}
           </div>
         ) : null}
 
-        <div className="rounded-3xl bg-papel p-4 ring-1 ring-linea">
-          <p className="font-bold">¿Cómo pagan?</p>
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            {(
-              [
-                ["una", "Todo junto"],
-                ["iguales", "Partes iguales"],
-                ["consumo", "Cada quien lo suyo"],
-              ] as const
-            ).map(([k, label]) => (
-              <button key={k} onClick={() => (setSplit(k), setPart(0), setCustomAmount(null))} className={cn("h-12 rounded-xl text-[15px] font-semibold ring-1", split === k ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
-                {label}
-              </button>
-            ))}
+        {!free ? (
+          <div className="rounded-3xl bg-papel p-4 ring-1 ring-linea">
+            <p className="font-bold">¿Cómo pagan?</p>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              {(
+                [
+                  ["una", "Todo junto"],
+                  ["iguales", "Partes iguales"],
+                  ["consumo", "Cada quien lo suyo"],
+                ] as const
+              ).map(([k, label]) => (
+                <button key={k} onClick={() => (setSplit(k), setPart(0), setCustomAmount(null))} className={cn("h-12 rounded-xl text-[15px] font-semibold ring-1", split === k ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {split !== "una" ? (
+              <>
+                <div className="mt-3 flex flex-wrap items-center gap-2 sm:gap-3">
+                  <span className="mr-1 text-sm font-semibold text-humo">{split === "iguales" ? "Partes" : "Personas"}</span>
+                  {[2, 3, 4, 5, 6].map((n) => (
+                    <button key={n} onClick={() => (setParts(n), setPart(0))} className={cn("size-11 rounded-xl font-bold ring-1 tnum", parts === n ? "bg-balcon text-white ring-balcon" : "ring-linea-2")}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                {split === "consumo" ? <p className="mt-2 text-sm text-humo">Toca P1, P2… en cada producto para asignarlo a una persona.</p> : null}
+                <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {shares.map((s, i) => {
+                    const paid = paidByPart(s.label);
+                    const isPaid = paid >= s.amount && s.amount > 0;
+                    return (
+                      <li key={s.label}>
+                        <button
+                          onClick={() => (setPart(i), setCustomAmount(null))}
+                          className={cn("flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left ring-1", part === i ? "ring-2 ring-balcon" : "ring-linea-2", isPaid && "bg-puerta-soft")}
+                        >
+                          <span className="font-semibold">{s.label}</span>
+                          <span className="text-right">
+                            <Money value={s.amount + s.tip} className="font-bold" />
+                            {isPaid ? <span className="block text-[12px] font-semibold text-puerta-2">Pagado</span> : s.tip ? <span className="block text-[12px] text-humo">con {cop(s.tip)} de propina</span> : null}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            ) : null}
           </div>
-          {split !== "una" ? (
-            <>
-              <div className="mt-3 flex flex-wrap items-center gap-2 sm:gap-3">
-                <span className="mr-1 text-sm font-semibold text-humo">{split === "iguales" ? "Partes" : "Personas"}</span>
-                {[2, 3, 4, 5, 6].map((n) => (
-                  <button key={n} onClick={() => (setParts(n), setPart(0))} className={cn("size-11 rounded-xl font-bold ring-1 tnum", parts === n ? "bg-balcon text-white ring-balcon" : "ring-linea-2")}>
-                    {n}
-                  </button>
-                ))}
-              </div>
-              {split === "consumo" ? <p className="mt-2 text-sm text-humo">Toca P1, P2… en cada producto para asignarlo a una persona.</p> : null}
-              <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-                {shares.map((s, i) => {
-                  const paid = paidByPart(s.label);
-                  const isPaid = paid >= s.amount && s.amount > 0;
-                  return (
-                    <li key={s.label}>
-                      <button
-                        onClick={() => (setPart(i), setCustomAmount(null))}
-                        className={cn("flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left ring-1", part === i ? "ring-2 ring-balcon" : "ring-linea-2", isPaid && "bg-puerta-soft")}
-                      >
-                        <span className="font-semibold">{s.label}</span>
-                        <span className="text-right">
-                          <Money value={s.amount + s.tip} className="font-bold" />
-                          {isPaid ? <span className="block text-[12px] font-semibold text-puerta-2">Pagado</span> : s.tip ? <span className="block text-[12px] text-humo">con {cop(s.tip)} de propina</span> : null}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </>
-          ) : null}
-        </div>
+        ) : null}
 
-        {config.loyalty.enabled ? (
+        {config.loyalty.enabled && !free ? (
           <div className="rounded-3xl bg-papel p-4 ring-1 ring-linea">
             <p className="flex items-center gap-2 font-bold">
               <Gift size={18} /> Sellos
@@ -310,45 +409,58 @@ export function PaymentScreen({
                 ) : null}
               </div>
             ) : (
-              <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
-                <input inputMode="tel" className="h-12 rounded-xl border border-linea-2 px-3 tnum outline-none focus:border-tinto" placeholder="Celular del cliente (opcional)" value={phone} onChange={(e) => setPhone(e.target.value)} />
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" className="size-5 accent-[var(--color-balcon)]" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-                  Autoriza sus datos (Ley 1581)
+              <div className="mt-2 grid gap-2">
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                  <input inputMode="tel" className="h-12 rounded-xl border border-linea-2 px-3 tnum outline-none focus:border-tinto" placeholder="Celular del cliente (opcional)" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                  {phone.trim() ? (
+                    <input
+                      className="h-12 w-40 rounded-xl border border-linea-2 px-3 tnum outline-none focus:border-tinto"
+                      placeholder="Cumpleaños MM-DD"
+                      value={birthday}
+                      onChange={(e) => setBirthday(e.target.value.replace(/[^\d-]/g, "").slice(0, 5))}
+                      aria-label="Cumpleaños (mes y día)"
+                    />
+                  ) : null}
+                </div>
+                <label className="flex items-start gap-2 text-sm">
+                  <input type="checkbox" className="mt-0.5 size-5 accent-[var(--color-balcon)]" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+                  <span>Autoriza usar su celular para el programa de sellos y recibir novedades del local. Puede pedir que lo borren cuando quiera (Ley 1581 de 2012).</span>
                 </label>
               </div>
             )}
           </div>
         ) : null}
 
-        <div className="rounded-3xl bg-papel p-4 ring-1 ring-linea">
-          <p className="font-bold">Factura electrónica</p>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <button onClick={() => setInvoice("consumidor")} className={cn("h-12 rounded-xl font-semibold ring-1", invoice === "consumidor" ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
-              Consumidor final
-            </button>
-            <button onClick={() => setInvoice("nit")} className={cn("h-12 rounded-xl font-semibold ring-1", invoice === "nit" ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
-              Con NIT o cédula
-            </button>
-          </div>
-          {invoice === "nit" ? (
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <input className="h-12 rounded-xl border border-linea-2 px-3 outline-none focus:border-tinto" placeholder="NIT o cédula" value={doc} onChange={(e) => setDoc(e.target.value)} />
-              <input className="h-12 rounded-xl border border-linea-2 px-3 outline-none focus:border-tinto" placeholder="Nombre o razón social" value={docName} onChange={(e) => setDocName(e.target.value)} />
-              <input className="h-12 rounded-xl border border-linea-2 px-3 outline-none focus:border-tinto sm:col-span-2" type="email" placeholder="Correo para enviarla (opcional)" value={email} onChange={(e) => setEmail(e.target.value)} />
+        {!free ? (
+          <div className="rounded-3xl bg-papel p-4 ring-1 ring-linea">
+            <p className="font-bold">Factura electrónica</p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button onClick={() => setInvoice("consumidor")} className={cn("h-12 rounded-xl font-semibold ring-1", invoice === "consumidor" ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+                Consumidor final
+              </button>
+              <button onClick={() => setInvoice("nit")} className={cn("h-12 rounded-xl font-semibold ring-1", invoice === "nit" ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+                Con NIT o cédula
+              </button>
             </div>
-          ) : null}
-        </div>
+            {invoice === "nit" ? (
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <input className="h-12 rounded-xl border border-linea-2 px-3 outline-none focus:border-tinto" placeholder="NIT o cédula" value={doc} onChange={(e) => setDoc(e.target.value)} />
+                <input className="h-12 rounded-xl border border-linea-2 px-3 outline-none focus:border-tinto" placeholder="Nombre o razón social" value={docName} onChange={(e) => setDocName(e.target.value)} />
+                <input className="h-12 rounded-xl border border-linea-2 px-3 outline-none focus:border-tinto sm:col-span-2" type="email" placeholder="Correo del cliente (opcional)" value={email} onChange={(e) => setEmail(e.target.value)} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       {/* Pagos */}
-      <section className="space-y-4 lg:sticky lg:top-[72px] lg:self-start">
+      <section ref={payPanel} className="scroll-mt-4 space-y-4 lg:sticky lg:top-[72px] lg:self-start">
         {check.pendingPayments.map((p) => (
           <div key={p.id} className="rounded-3xl bg-fachada-soft p-4 ring-1 ring-fachada">
             <p className="font-bold">
               El cliente reportó un pago con {METHOD_LABEL[p.method]} de {cop(p.amount + p.tip)}
             </p>
-            <p className="text-sm">Referencia {p.reference}. Confírmalo solo si ya llegó a la cuenta del local.</p>
+            <p className="text-sm">Referencia {p.reference}. Confírmalo solo si ya llegó a la cuenta del local. Mientras tanto no se puede cobrar lo demás.</p>
             <div className="mt-3 flex gap-2">
               <button className={btn("soft", "md")} disabled={pending} onClick={() => start(async () => void (report(await reviewClientPaymentAction(p.id, false)) && router.refresh()))}>
                 No llegó
@@ -362,11 +474,12 @@ export function PaymentScreen({
 
         <div className="rounded-3xl bg-tinto p-4 text-cal sm:p-5">
           <div className="flex items-baseline justify-between">
-            <p className="text-cal/75">{done ? "Pagado completo" : current.label ? `Cobrar ${current.label.toLowerCase()}` : "Falta por pagar"}</p>
+            <p className="text-cal/75">{done ? (free ? "Todo fue cortesía" : "Pagado completo") : current.label ? `Cobrar ${current.label.toLowerCase()}` : "Falta por pagar"}</p>
             {check.paid ? <p className="text-sm text-cal/70">Pagado {cop(check.paid + tipPaid)}</p> : null}
           </div>
           <p className="mt-1 text-5xl font-bold tracking-tight tnum [font-stretch:105%]">{cop(done ? 0 : charge)}</p>
           {!done && tipNow ? <p className="text-sm text-cal/70">Incluye {cop(tipNow)} de propina</p> : null}
+          {waiting ? <p className="mt-2 text-sm text-cal/80">{cop(pendingTotal)} por confirmar del pago que reportó el cliente.</p> : null}
 
           {!done ? (
             <>
@@ -386,7 +499,6 @@ export function PaymentScreen({
 
               {method === "efectivo" ? (
                 <div className="mt-4">
-                  {!cashOpen ? <p className="mb-3 rounded-xl bg-cereza px-3 py-2 text-sm font-semibold">La caja está cerrada: ábrela en Caja para recibir efectivo.</p> : null}
                   <div className="flex items-baseline justify-between">
                     <span className="text-cal/75">Recibido</span>
                     <span className="text-3xl font-bold tnum">{received ? cop(receivedNum) : "—"}</span>
@@ -405,34 +517,33 @@ export function PaymentScreen({
                     </p>
                   ) : null}
                   <div className="mt-3">
-                    <Keypad dark onKey={(k) => setReceived((r) => (k === "del" ? r.slice(0, -1) : k === "000" ? (r ? `${r}000` : "") : (r + k).slice(0, 8)))} extra={{ label: "000", value: "000" }} />
+                    <Keypad dark onKey={(k) => setReceived((r) => typeAmount(r, k))} extra={{ label: "000", value: "000" }} />
                   </div>
                 </div>
               ) : (
-                <div className="mt-4 grid gap-3 sm:grid-cols-[auto_1fr] sm:items-center">
-                  {qr ? <div className="mx-auto size-36 rounded-2xl bg-white p-2 [&_svg]:h-full [&_svg]:w-full" dangerouslySetInnerHTML={{ __html: qr }} /> : null}
-                  <div className="space-y-2">
-                    {method === "breb" ? (
-                      <p className="text-[15px]">
-                        El cliente abre su banco, entra a <b>Bre-B</b> y paga a la llave <b className="font-mono">{config.brebKey}</b>.
-                      </p>
-                    ) : method === "nequi" ? (
-                      <p className="text-[15px]">
-                        Pago a Nequi <b className="tnum">{config.nequiPhone}</b>.
-                      </p>
-                    ) : method === "tarjeta" ? (
-                      <p className="text-[15px]">Cobra {cop(charge)} en el datáfono y escribe el número de aprobación.</p>
-                    ) : (
-                      <p className="text-[15px]">Pago a Daviplata del local.</p>
-                    )}
-                    <input
-                      className="h-12 w-full rounded-xl bg-white/10 px-3 text-cal tnum outline-none placeholder:text-cal/50 focus:ring-2 focus:ring-fachada"
-                      placeholder={method === "tarjeta" ? "Número de aprobación" : "Referencia del pago"}
-                      value={reference}
-                      onChange={(e) => setReference(e.target.value)}
-                      inputMode="numeric"
-                    />
-                  </div>
+                <div className="mt-4 space-y-2">
+                  {method === "breb" ? (
+                    <div className="rounded-2xl bg-white/8 px-4 py-3">
+                      <p className="text-sm text-cal/75">El cliente abre su banco, entra a Bre-B y paga a la llave</p>
+                      <p className="mt-1 break-all font-mono text-2xl font-bold">{config.brebKey || "— (ponla en Ajustes)"}</p>
+                    </div>
+                  ) : method === "nequi" ? (
+                    <div className="rounded-2xl bg-white/8 px-4 py-3">
+                      <p className="text-sm text-cal/75">Pago a Nequi</p>
+                      <p className="mt-1 text-2xl font-bold tnum">{config.nequiPhone || "— (ponlo en Ajustes)"}</p>
+                    </div>
+                  ) : method === "tarjeta" ? (
+                    <p className="text-[15px]">Cobra {cop(charge)} en el datáfono y escribe el número de aprobación.</p>
+                  ) : (
+                    <p className="text-[15px]">Pago a Daviplata del local.</p>
+                  )}
+                  <input
+                    className="h-12 w-full rounded-xl bg-white/10 px-3 text-cal tnum outline-none placeholder:text-cal/50 focus:ring-2 focus:ring-fachada"
+                    placeholder={method === "tarjeta" ? "Número de aprobación" : "Referencia del pago"}
+                    value={reference}
+                    onChange={(e) => setReference(e.target.value)}
+                    inputMode="numeric"
+                  />
                 </div>
               )}
 
@@ -452,14 +563,23 @@ export function PaymentScreen({
                 <button className={btn("light", "lg", "px-4")} onClick={() => setCustomAmount((v) => (v === null ? String(amount) : null))} aria-pressed={customAmount !== null}>
                   {customAmount === null ? "Otro valor" : "Valor completo"}
                 </button>
-                <button className={btn("warn", "lg", "flex-1")} disabled={pending || hasDrafts || amount <= 0 || (method === "efectivo" && (!cashOpen || (receivedNum > 0 && receivedNum < charge)))} onClick={pay}>
-                  Registrar <span className="max-sm:hidden">pago de</span> {cop(charge)}
+                <button
+                  className={btn("warn", "lg", "flex-1")}
+                  disabled={pending || hasDrafts || waiting || !cashOpen || amount <= 0 || (method === "efectivo" && receivedNum > 0 && receivedNum < charge)}
+                  onClick={() => register()}
+                >
+                  {tipConfirm ? "Confirmar propina y registrar" : <>Registrar <span className="max-sm:hidden">pago de</span> {cop(charge)}</>}
                 </button>
               </div>
+              {canExact ? (
+                <button className={btn("light", "lg", "mt-2 w-full")} disabled={pending} onClick={exactCash}>
+                  <Banknote size={18} /> Efectivo exacto y cerrar
+                </button>
+              ) : null}
             </>
           ) : (
             <button className={btn("warn", "xl", "mt-4 w-full")} disabled={pending} onClick={close}>
-              <Check size={22} /> Cerrar cuenta y facturar
+              <Check size={22} /> {free ? "Cerrar cuenta (sin factura)" : "Cerrar cuenta y facturar"}
             </button>
           )}
         </div>
@@ -470,7 +590,7 @@ export function PaymentScreen({
             <ul className="mt-2 divide-y divide-linea">
               {check.payments.map((p) => (
                 <li key={p.id} className="flex items-center gap-3 py-2">
-                  <span className="text-humo">{ICONS[p.method as Method]}</span>
+                  <span className="text-humo">{ICONS[p.method]}</span>
                   <span className="flex-1">
                     <span className="font-semibold">{METHOD_LABEL[p.method]}</span>
                     {p.part ? <span className="text-sm text-humo"> · {p.part}</span> : null}
@@ -481,7 +601,11 @@ export function PaymentScreen({
                     {p.tip ? <span className="block text-[12px] text-humo">propina {cop(p.tip)}</span> : null}
                   </span>
                   {canRemove ? (
-                    <button className="flex size-9 items-center justify-center rounded-lg text-humo hover:bg-cereza-soft hover:text-cereza" aria-label="Quitar pago" onClick={() => start(async () => void (report(await removePaymentAction(p.id)) && router.refresh()))}>
+                    <button
+                      className="flex size-9 items-center justify-center rounded-lg text-humo hover:bg-cereza-soft hover:text-cereza"
+                      aria-label="Quitar pago"
+                      onClick={() => (setRemoveReason(""), setRemoving({ id: p.id, label: `${METHOD_LABEL[p.method]} por ${cop(p.amount + p.tip)}` }))}
+                    >
                       <Trash2 size={16} />
                     </button>
                   ) : null}
@@ -491,6 +615,58 @@ export function PaymentScreen({
           </div>
         ) : null}
       </section>
+
+      {/* En el celular el cobro queda lejos: una barra fija lleva a él (o cierra cuando ya está pagado) */}
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-linea bg-papel p-3 lg:hidden">
+        {done ? (
+          <button className={btn("warn", "lg", "w-full")} disabled={pending} onClick={close}>
+            <Check size={20} /> {free ? "Cerrar cuenta" : "Cerrar cuenta y facturar"}
+          </button>
+        ) : (
+          <button className={btn("dark", "lg", "w-full justify-between")} onClick={() => payPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            <span>{waiting ? "Pago del cliente por confirmar" : "Ir a cobrar"}</span>
+            <span className="tnum">{cop(charge)}</span>
+          </button>
+        )}
+      </div>
+
+      <Sheet
+        open={!!removing}
+        onClose={() => setRemoving(null)}
+        title="Quitar el pago"
+        footer={
+          <button className={btn("danger", "lg", "w-full")} disabled={pending || removeReason.trim().length < 3} onClick={removePayment}>
+            Quitar el pago
+          </button>
+        }
+      >
+        <p className="text-[15px]">{removing?.label}. Queda en el registro con el motivo y sale en el panel del día.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {["Se registró dos veces", "Método equivocado", "El datáfono lo rechazó"].map((r) => (
+            <button key={r} type="button" onClick={() => setRemoveReason(r)} className={cn("rounded-full px-3.5 py-2 text-sm font-semibold ring-1", removeReason === r ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+              {r}
+            </button>
+          ))}
+        </div>
+        <input className="mt-3 h-12 w-full rounded-xl border border-linea-2 px-3 outline-none focus:border-tinto" value={removeReason} onChange={(e) => setRemoveReason(e.target.value)} placeholder="Otro motivo" />
+      </Sheet>
+      <AuthSheet
+        request={auth}
+        authorizers={authorizers}
+        meId={meId}
+        pending={pending}
+        onClose={() => setAuth(null)}
+        onAuth={(credentials) => {
+          const a = auth!;
+          start(async () => {
+            if (report(await a.run(credentials), a.done)) {
+              setAuth(null);
+              setRemoving(null);
+              router.refresh();
+            }
+          });
+        }}
+      />
     </div>
   );
 }
