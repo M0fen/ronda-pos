@@ -156,7 +156,13 @@ async function acceptRequest(tx: Tx, bizId: string, requestId: string, actor: St
     if (!req.table_id) throw new UserError("Pedido sin mesa");
     const table = await tx.one("select id from floor_tables where id = $1 and business_id = $2 for update", [req.table_id, bizId]);
     if (!table) throw new UserError("Esa mesa ya no está");
-    const open = await tx.one<{ id: string; number: number }>("select id, number from checks where table_id = $1 and status in ('open','bill') and split_of is null limit 1", [req.table_id]);
+    // El pedido entra a la cuenta donde quedó (si la mesa se unió a otra o pasó sus productos); si no, a la principal de la mesa
+    const assigned = req.check_id
+      ? await tx.one<{ id: string; number: number }>("select id, number from checks where id = $1 and business_id = $2 and status in ('open','bill') for update", [req.check_id, bizId])
+      : null;
+    const open =
+      assigned ??
+      (await tx.one<{ id: string; number: number }>("select id, number from checks where table_id = $1 and status in ('open','bill') and split_of is null limit 1", [req.table_id]));
     let number = open?.number ?? 0;
     if (open) checkId = open.id;
     else {

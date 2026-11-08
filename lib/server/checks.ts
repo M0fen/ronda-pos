@@ -328,12 +328,15 @@ async function insertCheck(
  * La cuenta principal de una mesa se cerró (pagada, descartada o unida a otra) y quedan cuentas aparte: la más antigua
  * pasa a ser la principal y las demás quedan colgadas de ella. Se llama después de cerrar, en la misma transacción.
  */
-export async function promoteSplit(tx: Tx, checkId: string) {
+export async function promoteSplit(tx: Tx, checkId: string): Promise<string | null> {
   const kids = await tx.query<{ id: string }>("select id from checks where split_of = $1 and status in ('open','bill') order by opened_at, id", [checkId]);
   const [first, ...rest] = kids;
-  if (!first) return;
+  if (!first) return null;
   await tx.query("update checks set split_of = null, name = case when kind = 'mesa' then '' else name end where id = $1", [first.id]);
   if (rest.length) await tx.query("update checks set split_of = $1 where id = any($2::uuid[])", [first.id, rest.map((k) => k.id)]);
+  // La mesa sigue ocupada: lo que pidieron desde el QR y aún espera pasa a la cuenta que queda
+  await tx.query("update requests set check_id = $2 where check_id = $1 and status = 'pending'", [checkId, first.id]);
+  return first.id;
 }
 
 /** Nada puede dejar lo pagado por encima del total: primero se quita un pago. Se llama después del cambio, en la misma transacción. */
@@ -430,13 +433,17 @@ export async function changeDraft(staff: Staff, itemId: string, patch: DraftPatc
   const menu = Array.isArray(patch.modifierIds) ? await loadMenu(staff.business_id) : null;
   const db = await getDb();
   await db.tx(async (tx) => {
+    if (!UUID.test(String(itemId))) throw new UserError("Ítem no encontrado");
+    // Primero la cuenta y después el producto, en el mismo orden que enviar o anular: dos tablets a la vez no se traban
+    const owner = await tx.one<{ check_id: string }>("select check_id from check_items where id = $1 and business_id = $2", [itemId, staff.business_id]);
+    if (!owner) throw new UserError("Ítem no encontrado");
+    await editableCheck(tx, staff.business_id, owner.check_id);
     const item = await tx.one<{ check_id: string; status: string; product_id: string | null; note: string; allergy: boolean; held: boolean }>(
-      "select check_id, status, product_id, note, allergy, held from check_items where id = $1 and business_id = $2 for update",
-      [itemId, staff.business_id],
+      "select check_id, status, product_id, note, allergy, held from check_items where id = $1 and check_id = $2 for update",
+      [itemId, owner.check_id],
     );
-    if (!item) throw new UserError("Ítem no encontrado");
+    if (!item) throw new UserError("Ese producto ya cambió de cuenta: vuelve a intentarlo");
     if (item.status !== "draft") throw new UserError("Ya se envió: para quitarlo, anúlalo");
-    await editableCheck(tx, staff.business_id, item.check_id);
     if (patch.qty !== undefined && patch.qty <= 0) {
       await tx.query("delete from check_items where id = $1", [itemId]);
       if (item.held) await bump(tx, staff.business_id);
@@ -659,8 +666,9 @@ export async function discardCheck(staff: Staff, checkId: string) {
     // Solo se borran los borradores; lo anulado queda como registro
     const drafts = await tx.query<{ id: string }>("delete from check_items where check_id = $1 and status = 'draft' returning id", [checkId]);
     await tx.query("update checks set status = 'void', closed_at = now(), closed_by = $2 where id = $1", [checkId, staff.id]);
-    await tx.query("update requests set status = 'done', handled_by = $2, handled_at = now() where check_id = $1 and status = 'pending'", [checkId, staff.id]);
+    // Si quedan cuentas aparte en la mesa, la más antigua la toma junto con lo que espera del QR; si no, eso se da por atendido
     await promoteSplit(tx, checkId);
+    await tx.query("update requests set status = 'done', handled_by = $2, handled_at = now() where check_id = $1 and status = 'pending'", [checkId, staff.id]);
     await audit(tx, staff.business_id, staff.id, "discard", { check: check.number, drafts: drafts.length });
     await bump(tx, staff.business_id);
   });
@@ -705,6 +713,8 @@ export async function repeatRound(staff: Staff, checkId: string, round: number) 
     }
     if (!units) throw new UserError(`No se puede repetir: ${missing.join(", ")} ya no ${missing.length > 1 ? "están" : "está"} disponible${missing.length > 1 ? "s" : ""}`);
     await tx.query("update checks set updated_at = now() where id = $1", [checkId]);
+    // Un domicilio ya empacado que recibe algo más se revisa otra vez
+    await reopenBag(tx, staff.business_id, checkId, staff.id);
     return { units, missing };
   });
 }
@@ -725,23 +735,38 @@ export async function moveItems(staff: Staff, fromId: string, input: { items: { 
   }
   if (!wanted.size) throw new UserError("Elige qué productos mover");
   const target = (input?.to && typeof input.to === "object" ? input.to : {}) as MoveTarget;
+  const fromKey = String(fromId).toLowerCase();
+  const targetKey = "checkId" in target ? String(target.checkId).toLowerCase() : null;
+  if (!UUID.test(fromKey) || (targetKey !== null && !UUID.test(targetKey))) throw new UserError("Cuenta no encontrada");
   const db = await getDb();
   return db.tx(async (tx) => {
-    const from = await editableCheck(tx, staff.business_id, fromId);
+    // Orden de bloqueo: la principal de la familia primero (como al cobrarla) y después las cuentas por id.
+    // Así dos movimientos al revés, o uno mientras se cobra la principal, no se traban.
+    const peek = await tx.one<{ split_of: string | null }>("select split_of from checks where id = $1 and business_id = $2", [fromKey, staff.business_id]);
+    if (!peek) throw new UserError("Cuenta no encontrada");
+    if (peek.split_of && "split" in target) await tx.query("select id from checks where id = $1 for update", [peek.split_of]);
+    const locked = new Map<string, LockedCheck>();
+    for (const id of [...new Set([fromKey, ...(targetKey ? [targetKey] : [])])].sort()) locked.set(id, await editableCheck(tx, staff.business_id, id));
+    const from = locked.get(fromKey)!;
+    if (from.split_of !== peek.split_of) throw new UserError("La cuenta cambió mientras tanto: vuelve a intentarlo");
     if (from.kind === "domicilio") throw new UserError("Los productos de un domicilio no se pasan a otra cuenta");
     const rows = await tx.query<{ id: string; name: string; qty: number; round: number }>(
       "select id, name, qty, round from check_items where check_id = $1 and id = any($2::uuid[]) and status <> 'void' order by created_at, id for update",
-      [fromId, [...wanted.keys()]],
+      [from.id, [...wanted.keys()]],
     );
     if (rows.length !== wanted.size) throw new UserError("Algunos productos ya no están en esta cuenta: revisa y vuelve a intentar");
     for (const r of rows) if (wanted.get(r.id)! > r.qty) throw new UserError(`De ${r.name} solo hay ${r.qty}`);
 
     let to: LockedCheck;
     let fresh = false;
-    if ("checkId" in target) {
-      if (target.checkId === fromId) throw new UserError("Elige otra cuenta");
-      to = await editableCheck(tx, staff.business_id, String(target.checkId));
+    if (targetKey) {
+      to = locked.get(targetKey)!;
+      if (to.id === from.id) throw new UserError("Elige otra cuenta");
       if (to.kind === "domicilio") throw new UserError("A un domicilio no se le pasan productos del salón");
+      // Un descuento no se gana ni se pierde pasando productos: las dos cuentas deben tener el mismo
+      if (to.discount_pct !== from.discount_pct) {
+        throw new UserError(`Las cuentas tienen descuentos distintos (${from.discount_pct} % y ${to.discount_pct} %): ponles el mismo antes de pasar productos`);
+      }
     } else if ("tableId" in target) {
       if (!UUID.test(String(target.tableId))) throw new UserError("Mesa no encontrada");
       const table = await tx.one("select 1 from floor_tables where id = $1 and business_id = $2 and active for update", [target.tableId, staff.business_id]);
@@ -749,7 +774,17 @@ export async function moveItems(staff: Staff, fromId: string, input: { items: { 
       if (await tx.one("select 1 from checks where table_id = $1 and status in ('open','bill') and split_of is null", [target.tableId])) {
         throw new UserError("Esa mesa ya tiene cuenta: elígela en Otra cuenta");
       }
-      to = await insertCheck(tx, staff.business_id, { table_id: target.tableId, kind: "mesa", name: "", guests: 1, opened_by: from.opened_by ?? staff.id, split_of: null });
+      to = await insertCheck(tx, staff.business_id, {
+        table_id: target.tableId,
+        kind: "mesa",
+        name: "",
+        guests: 1,
+        opened_by: from.opened_by ?? staff.id,
+        split_of: null,
+        // El descuento autorizado viaja con los productos
+        discount_pct: from.discount_pct,
+        discount_reason: from.discount_reason,
+      });
       fresh = true;
     } else if ("split" in target && target.split) {
       // La cuenta aparte cuelga de la principal de la mesa y lleva el siguiente número libre (Cuenta 2, Cuenta 3…)
@@ -793,20 +828,22 @@ export async function moveItems(staff: Staff, fromId: string, input: { items: { 
         );
       }
     }
-    await assertNotOverpaid(tx, staff.business_id, fromId);
+    await assertNotOverpaid(tx, staff.business_id, from.id);
     // La pre-cuenta de las dos ya no sirve: el total cambió
-    await tx.query("update checks set status = 'open', updated_at = now() where id = any($1::uuid[])", [[fromId, to.id]]);
+    await tx.query("update checks set status = 'open', updated_at = now() where id = any($1::uuid[])", [[from.id, to.id]]);
 
-    const empty = !(await tx.one("select 1 from check_items where check_id = $1 and status <> 'void'", [fromId]));
-    const paid = await tx.one("select 1 from payments where check_id = $1 and status in ('ok','pending')", [fromId]);
+    const empty = !(await tx.one("select 1 from check_items where check_id = $1 and status <> 'void'", [from.id]));
+    const paid = await tx.one("select 1 from payments where check_id = $1 and status in ('ok','pending')", [from.id]);
     const closed = empty && !paid;
     if (closed) {
-      await tx.query("update checks set status = 'void', closed_at = now(), closed_by = $2 where id = $1", [fromId, staff.id]);
-      await tx.query("update requests set check_id = $2 where check_id = $1 and status = 'pending'", [fromId, to.id]);
-      await promoteSplit(tx, fromId);
+      await tx.query("update checks set status = 'void', closed_at = now(), closed_by = $2 where id = $1", [from.id, staff.id]);
+      // Si quedan cuentas aparte, la más antigua toma la mesa (y lo que esperaba del QR); si no, lo pendiente va con los productos
+      if (!(await promoteSplit(tx, from.id))) {
+        await tx.query("update requests set check_id = $2, table_id = coalesce($3, table_id) where check_id = $1 and status = 'pending'", [from.id, to.id, to.table_id]);
+      }
     }
     await audit(tx, staff.business_id, staff.id, "items_moved", {
-      checkId: fromId,
+      checkId: from.id,
       toId: to.id,
       check: from.number,
       to: to.number,
@@ -823,35 +860,42 @@ export async function moveItems(staff: Staff, fromId: string, input: { items: { 
  * (ya no se cobra). No se unen cuentas con pagos ni con descuentos distintos.
  */
 export async function mergeChecks(staff: Staff, intoId: string, fromId: string) {
-  if (intoId === fromId) throw new UserError("Elige otra cuenta");
+  const intoKey = String(intoId).toLowerCase();
+  const fromKey = String(fromId).toLowerCase();
+  if (intoKey === fromKey) throw new UserError("Elige otra cuenta");
   const db = await getDb();
   await db.tx(async (tx) => {
     // Siempre en el mismo orden: dos tablets uniendo al revés no se traban
     const locked = new Map<string, LockedCheck>();
-    for (const id of [String(intoId), String(fromId)].sort()) locked.set(id, await editableCheck(tx, staff.business_id, id));
-    const into = locked.get(String(intoId))!;
-    const from = locked.get(String(fromId))!;
+    for (const id of [intoKey, fromKey].sort()) locked.set(id, await editableCheck(tx, staff.business_id, id));
+    const into = locked.get(intoKey)!;
+    const from = locked.get(fromKey)!;
+    if (into.id === from.id) throw new UserError("Elige otra cuenta");
     if (into.kind === "domicilio" || from.kind === "domicilio") throw new UserError("Los domicilios no se unen con otras cuentas");
-    if (await tx.one("select 1 from payments where check_id = $1 and status in ('ok','pending')", [fromId])) {
+    if (await tx.one("select 1 from payments where check_id = $1 and status in ('ok','pending')", [from.id])) {
       throw new UserError(`La cuenta #${from.number} ya tiene pagos: cóbrala aparte o quita esos pagos antes de unirla`);
     }
-    if (from.discount_pct && from.discount_pct !== into.discount_pct) {
-      throw new UserError(`La cuenta #${from.number} tiene un descuento del ${from.discount_pct} %: quítalo o pon el mismo aquí antes de unirlas`);
+    // Un descuento no se extiende ni se pierde al unir: las dos cuentas deben tener el mismo
+    if (from.discount_pct !== into.discount_pct) {
+      throw new UserError(`Las cuentas tienen descuentos distintos (${into.discount_pct} % y ${from.discount_pct} %): ponles el mismo antes de unirlas`);
     }
-    const top = (await tx.one<{ r: number }>("select coalesce(max(round), 0) as r from check_items where check_id = $1", [intoId]))!.r;
+    const top = (await tx.one<{ r: number }>("select coalesce(max(round), 0) as r from check_items where check_id = $1", [into.id]))!.r;
     const moved = await tx.query<{ id: string }>(
       "update check_items set check_id = $2, round = case when round > 0 then round + $3 else 0 end where check_id = $1 returning id",
-      [fromId, intoId, top],
+      [from.id, into.id, top],
     );
-    await tx.query("update requests set check_id = $2 where check_id = $1 and status = 'pending'", [fromId, intoId]);
     await tx.query("update checks set guests = least(40, guests + $2), customer_id = coalesce(customer_id, $3), status = 'open', updated_at = now() where id = $1", [
-      intoId,
+      into.id,
       from.guests,
       from.customer_id,
     ]);
-    await tx.query("update checks set status = 'merged', merged_into = $2, closed_at = now(), closed_by = $3, updated_at = now() where id = $1", [fromId, intoId, staff.id]);
-    await promoteSplit(tx, fromId);
-    await audit(tx, staff.business_id, staff.id, "checks_merged", { checkId: intoId, fromId, check: into.number, from: from.number, items: moved.length });
+    await tx.query("update checks set status = 'merged', merged_into = $2, closed_at = now(), closed_by = $3, updated_at = now() where id = $1", [from.id, into.id, staff.id]);
+    // Si la otra era la principal de su mesa y quedan cuentas aparte allá, la más antigua toma esa mesa y lo que esperaba del QR;
+    // si no, lo pendiente del QR viene con los productos a esta cuenta
+    if (!(await promoteSplit(tx, from.id))) {
+      await tx.query("update requests set check_id = $2, table_id = coalesce($3, table_id) where check_id = $1 and status = 'pending'", [from.id, into.id, into.table_id]);
+    }
+    await audit(tx, staff.business_id, staff.id, "checks_merged", { checkId: into.id, fromId: from.id, check: into.number, from: from.number, items: moved.length });
     await bump(tx, staff.business_id);
   });
 }

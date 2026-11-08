@@ -51,6 +51,11 @@ beforeAll(async () => {
   [valentina, juanPablo, camila, andres] = await Promise.all([person("Valentina"), person("Juan Pablo"), person("Camila"), person("Andrés")]);
   for (const p of await db.query<{ id: string; name: string }>("select id, name from products where business_id = $1", [biz])) products.set(p.name, p.id);
   if (!(await pay.currentCashSession(biz))) await pay.openCash(valentina, 200_000);
+  // Mesas de sobra para las pruebas: cada una ocupa una o dos y la demo ya trae varias ocupadas
+  const zone = (await db.one<{ id: string }>("select id from zones where business_id = $1 order by sort limit 1", [biz]))!.id;
+  for (let n = 1; n <= 30; n++) {
+    await db.query("insert into floor_tables (business_id, zone_id, name, seats, qr_token) values ($1, $2, $3, 4, $4)", [biz, zone, `P${n}`, `prueba-cuentas-${n}`]);
+  }
 }, 180_000);
 
 afterAll(() => {
@@ -214,6 +219,76 @@ describe("barra y cuentas", () => {
     expect(tile.splits.map((s) => s.id)).toEqual([child.id]);
     const board = await checks.kdsBoard(biz, "cocina");
     expect(board.active.find((t) => t.checkId === id)?.movedFrom).toBe(table.name);
+  });
+
+  it("un descuento no se extiende ni se pierde al unir o pasar productos", async () => {
+    const a = await tableCheck([["Agua", 1]]);
+    await checks.sendRound(juanPablo, a.id);
+    await checks.setDiscount(andres, a.id, { pct: 50, reason: "Consumo del equipo" });
+    const b = await tableCheck([["Coca-Cola lata", 2]], juanPablo, [a.table.id]);
+    await checks.sendRound(juanPablo, b.id);
+    await expect(checks.mergeChecks(juanPablo, a.id, b.id)).rejects.toThrow(/descuentos distintos/);
+    await expect(checks.mergeChecks(juanPablo, b.id, a.id)).rejects.toThrow(/descuentos distintos/);
+    const coke = (await items(b.id))[0]!;
+    await expect(checks.moveItems(juanPablo, b.id, { items: [{ id: coke.id, qty: 1 }], to: { checkId: a.id } })).rejects.toThrow(/descuentos distintos/);
+    // Todo a una mesa libre: el descuento autorizado viaja con los productos
+    const target = await freeTable([a.table.id, b.table.id]);
+    const all = (await items(a.id)).map((i) => ({ id: i.id, qty: i.qty }));
+    const moved = await checks.moveItems(juanPablo, a.id, { items: all, to: { tableId: target.id } });
+    expect((await checks.loadCheck(biz, moved.id))!.discount_pct).toBe(50);
+  });
+
+  it("una cuenta no se une ni se pasa a sí misma, aunque el id llegue en mayúsculas", async () => {
+    const { id } = await tableCheck([["Agua", 1]]);
+    await checks.sendRound(juanPablo, id);
+    await expect(checks.mergeChecks(juanPablo, id, id.toUpperCase())).rejects.toThrow(/otra cuenta/);
+    const line = (await items(id))[0]!;
+    await expect(checks.moveItems(juanPablo, id, { items: [{ id: line.id, qty: 1 }], to: { checkId: id.toUpperCase() } })).rejects.toThrow(/otra cuenta/);
+    expect((await checks.loadCheck(biz, id))!.status).toBe("open");
+  });
+
+  it("lo que espera del QR no se pierde: queda en la cuenta que sigue en la mesa o en la cuenta a la que se unió", async () => {
+    const qr = await import("../lib/server/qr");
+    const tokenOf = async (tableId: string) => (await db.one<{ qr_token: string }>("select qr_token from floor_tables where id = $1", [tableId]))!.qr_token;
+    const coke = products.get("Coca-Cola lata")!;
+    // Mesa con cuenta aparte: se paga la principal y el pedido del QR sigue esperando, ahora en la aparte
+    const { id, table } = await tableCheck([["Agua", 2]]);
+    await checks.sendRound(juanPablo, id);
+    const line = (await items(id))[0]!;
+    const child = await checks.moveItems(juanPablo, id, { items: [{ id: line.id, qty: 1 }], to: { split: true } });
+    expect(await qr.submitQrOrder(await tokenOf(table.id), [{ productId: coke, qty: 1 }], "Ana")).toEqual({ needsApproval: true });
+    const req = (await db.one<{ id: string }>("select id from requests where table_id = $1 and kind = 'order' and status = 'pending'", [table.id]))!;
+    const { total } = (await checks.loadCheck(biz, id))!.totals;
+    await pay.registerPayment(valentina, id, { method: "efectivo", amount: total, tip: 0 });
+    await pay.closeCheck(valentina, id, { tipAnswer: "no", invoice: { kind: "consumidor" } });
+    expect(await db.one("select check_id, status from requests where id = $1", [req.id])).toEqual({ check_id: child.id, status: "pending" });
+    await qr.approveRequest(juanPablo, req.id);
+    expect((await items(child.id)).some((i) => i.name === "Coca-Cola lata")).toBe(true);
+
+    // Mesa que se une a otra: el pedido pendiente entra a la cuenta que queda y no abre otra en la mesa vieja
+    const a = await tableCheck([["Agua", 1]]);
+    await checks.sendRound(juanPablo, a.id);
+    const b = await tableCheck([["Agua", 1]], camila, [a.table.id]);
+    await qr.submitQrOrder(await tokenOf(b.table.id), [{ productId: coke, qty: 1 }], "Beto");
+    const reqB = (await db.one<{ id: string }>("select id from requests where table_id = $1 and kind = 'order' and status = 'pending'", [b.table.id]))!;
+    await checks.mergeChecks(juanPablo, a.id, b.id);
+    await qr.approveRequest(juanPablo, reqB.id);
+    expect((await items(a.id)).some((i) => i.name === "Coca-Cola lata")).toBe(true);
+    expect((await checks.floorState(biz)).tables.find((t) => t.id === b.table.id)!.check).toBeNull();
+  });
+
+  it("repetir una ronda en un domicilio empacado lo devuelve a empaque", async () => {
+    const deliv = await import("../lib/server/delivery");
+    const { packingList } = await import("../lib/core/delivery");
+    const mateo = (await db.one<Staff>("select id, business_id, name, role, color from staff where business_id = $1 and name = 'Mateo'", [biz]))!;
+    const id = await deliv.createDelivery(valentina, { channel: "rappi", customer: "Laura", code: "R-777", rider: "15" });
+    await checks.addItems(valentina, id, [{ productId: products.get("Coca-Cola lata")!, qty: 1 }]);
+    await checks.sendRound(valentina, id);
+    for (const it of await items(id)) await checks.kdsSetItem(mateo, it.id, "ready");
+    await deliv.packDelivery(valentina, id, packingList((await checks.loadCheck(biz, id))!.items));
+    expect((await checks.loadCheck(biz, id))!.delivery?.packedAt).toBeTruthy();
+    await checks.repeatRound(valentina, id, 1);
+    expect((await checks.loadCheck(biz, id))!.delivery?.packedAt).toBeUndefined();
   });
 
   it("una cortesía pide el motivo y queda en la auditoría", async () => {

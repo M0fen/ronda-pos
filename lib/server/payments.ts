@@ -228,7 +228,7 @@ export async function closeCheckTx(tx: Tx, staff: Staff, biz: Business, checkId:
     input.tipAnswer === "si" ? "si" : "no",
     customerId,
   ]);
-  // Si era la cuenta principal de la mesa y quedan cuentas aparte, la más antigua pasa a ser la principal
+  // Si era la cuenta principal de la mesa y quedan cuentas aparte, la más antigua pasa a ser la principal (con lo que espera del QR)
   await promoteSplit(tx, checkId);
   // Lo listo se entregó; lo que aún se prepara sigue en barra y cocina hasta que salga
   await tx.query("update check_items set status = 'delivered', delivered_at = coalesce(delivered_at, now()) where check_id = $1 and status = 'ready'", [checkId]);
