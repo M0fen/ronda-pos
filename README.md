@@ -1,6 +1,6 @@
 # Ronda
 
-Sistema de punto de venta para cafés, bares y restaurantes en Colombia: mesas, comandas a barra y cocina con la ficha de cada plato, domicilios de Rappi y propios con lista de empaque, mostrador con pantalla de turnos, cobro con propina voluntaria y cuentas divididas, Nequi y Bre-B, factura electrónica, carta QR, inventario por receta, sellos para clientes, caja con arqueo ciego, turnos marcados con PIN, el costo de cada turno y de cada persona frente a lo que vende, varias sedes con un panel de la cadena y el resumen del día por WhatsApp. Funciona en el navegador de la tablet o el celular que ya tiene el local.
+Sistema de punto de venta para cafés, bares y restaurantes en Colombia: mesas, comandas a barra y cocina con la ficha de cada plato, domicilios de Rappi y propios con lista de empaque, mostrador con pantalla de turnos, cobro con propina voluntaria y cuentas divididas, Nequi y Bre-B, factura electrónica, carta QR, inventario por receta, sellos para clientes, caja con arqueo ciego, turnos marcados con PIN, el costo de cada turno y de cada persona frente a lo que vende, varias sedes con un panel de la cadena, el resumen del día por WhatsApp y los archivos para el contador (ventas, impuestos, propinas, caja y compras por jornada y por sede). Funciona en el navegador de la tablet o el celular que ya tiene el local.
 
 La portada (`/`) presenta el sistema. La demo abre en `/entrar` con Sr. Patata, cadena de Pereira y Dosquebradas con cuatro sedes (Circunvalar, Belmonte, Dosquebradas y el mostrador de Galicia Mall Plaza): su carta pública con precios redondeados y, en cada sede, su equipo con los turnos de las últimas dos semanas, ventas en mesa, para llevar y por Rappi, y el servicio en marcha.
 
@@ -31,7 +31,8 @@ Un recorrido de cinco minutos:
 7. En **Panel → Rentabilidad** mira qué turnos se pagan solos, cuánto costó cada persona con recargos y carga, y las alertas de jornada (42 horas, extras, domingos y festivos).
 8. En `/entrar`, toca **Marcar turno**, elige a Luisa y escribe 6666: queda en turno y suma a la mano de obra de hoy.
 9. Como **Andrés**, abre **Domicilios**: un pedido de Rappi en cada etapa. Acepta el nuevo, revisa la lista del que está para empacar (la bolsa no se cierra si falta algo) y entrega el que espera el domiciliario: queda pagado en la plataforma y con su factura. En **Barra y cocina** los tiquetes de domicilio dicen en cuánto llega el domiciliario.
-10. En **Panel → Cadena** compara las cuatro sedes: ventas, insumos, equipo, comisiones de Rappi, alertas y lo que hay que comprar en cada una. **Ir a Galicia** pasa la tablet a esa sede: abre **Pantalla de turnos** desde Barra y cocina para ver el televisor del mostrador.
+10. En **Panel → Contador** descarga las ventas, los impuestos, las propinas, la caja y las compras del mes, por sede o de toda la cadena, en archivos que Excel abre con doble clic.
+11. En **Panel → Cadena** compara las cuatro sedes: ventas, insumos, equipo, comisiones de Rappi, alertas y lo que hay que comprar en cada una. **Ir a Galicia** pasa la tablet a esa sede: abre **Pantalla de turnos** desde Barra y cocina para ver el televisor del mostrador.
 
 En **Panel → Ajustes** está el botón para reiniciar la demo.
 
@@ -79,8 +80,8 @@ Seguridad: fuera de la demo solo las tablets enroladas muestran al equipo; cada 
 ## Cómo está hecho
 
 - Next.js 16 (App Router), React 19 y Tailwind 4. Todo se lee en Server Components y todo lo que escribe va por Server Actions (no hay rutas `/api`).
-- `lib/core/`: reglas puras con pruebas (impuesto incluido, propina, división de cuentas, vueltas, sellos, happy hour, jornada; en `labor.ts` el costo de cada turno: recargos, festivos, carga prestacional y alertas de jornada; en `delivery.ts` las etapas de un domicilio y su lista de empaque).
-- `lib/server/`: pedidos y rondas, pagos y caja, domicilios, cadena, carta QR, inventario, reportes, recibos, equipo y permisos.
+- `lib/core/`: reglas puras con pruebas (impuesto incluido, propina, división de cuentas, vueltas, sellos, happy hour, jornada; en `csv.ts` el formato de los archivos del contador; en `labor.ts` el costo de cada turno: recargos, festivos, carga prestacional y alertas de jornada; en `delivery.ts` las etapas de un domicilio y su lista de empaque).
+- `lib/server/`: pedidos y rondas, pagos y caja, domicilios, cadena, carta QR, inventario, reportes, recibos, equipo y permisos, y en `export.ts` los archivos para el contador.
 - `lib/schema.ts`: migraciones SQL; `lib/seed.ts`: la cadena de la demo, cuatro sedes con dos semanas de ventas y de turnos.
 - Tiempo real por sondeo liviano: cada cambio sube un contador y las pantallas abiertas se refrescan.
 
