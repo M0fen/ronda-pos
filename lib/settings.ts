@@ -22,6 +22,10 @@ export interface Settings {
   labor: { exonerated: boolean; arlClass: number; alertPct: number; turnos: Turno[] };
   /** Bloqueo por inactividad de las tablets, en minutos (0: apagado) */
   security: { lockMinutes: number };
+  /** Barra y cocina: a los cuántos minutos un tiquete se pone amarillo (warn) y rojo (late), por estación */
+  kds: { barraWarn: number; barraLate: number; cocinaWarn: number; cocinaLate: number };
+  /** Motivos de lista (anular, cortesía, descuento) y notas rápidas para barra y cocina: un toque en vez de escribir */
+  reasons: { void: string[]; courtesy: string[]; discount: string[]; notes: string[] };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -39,6 +43,13 @@ export const DEFAULT_SETTINGS: Settings = {
   channels: { rappi: true, rappiPct: 25, didi: false, didiPct: 20, propio: true },
   labor: { exonerated: true, arlClass: 1, alertPct: 35, turnos: [{ name: "Día", from: "06:00" }, { name: "Noche", from: "17:00" }] },
   security: { lockMinutes: 10 },
+  kds: { barraWarn: 6, barraLate: 12, cocinaWarn: 12, cocinaLate: 20 },
+  reasons: {
+    void: ["Se marcó dos veces", "El cliente cambió de opinión", "Demoró mucho", "Salió mal preparado"],
+    courtesy: ["Cortesía de la casa", "Compensación por demora", "Cliente frecuente", "Cumpleaños"],
+    discount: ["Cliente frecuente", "Error en el pedido", "Convenio", "Consumo del equipo"],
+    notes: ["Sin cebolla", "Sin salsas", "Salsas aparte", "Bien asada", "Sin hielo", "Para compartir"],
+  },
 };
 
 type Obj = Record<string, unknown>;
@@ -70,10 +81,31 @@ export function mergeSettings(saved: unknown): Settings {
   s.labor.alertPct = Math.min(60, Math.max(10, Math.round(s.labor.alertPct) || 35));
   s.labor.turnos = cleanTurnos(s.labor.turnos);
   s.security.lockMinutes = Math.min(120, Math.max(0, Math.round(s.security.lockMinutes) || 0));
+  for (const st of ["barra", "cocina"] as const) {
+    const warn = Math.min(60, Math.max(1, Math.round(s.kds[`${st}Warn`]) || DEFAULT_SETTINGS.kds[`${st}Warn`]));
+    s.kds[`${st}Warn`] = warn;
+    s.kds[`${st}Late`] = Math.min(120, Math.max(warn + 1, Math.round(s.kds[`${st}Late`]) || DEFAULT_SETTINGS.kds[`${st}Late`]));
+  }
+  for (const k of ["void", "courtesy", "discount", "notes"] as const) s.reasons[k] = cleanList(s.reasons[k]);
   s.invoice.prefix = s.invoice.prefix.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
   for (const k of ["validFrom", "validTo"] as const) if (!/^\d{4}-\d{2}-\d{2}$/.test(s.invoice[k])) s.invoice[k] = "";
   for (const k of ["rangeFrom", "rangeTo"] as const) s.invoice[k] = Math.max(0, Math.floor(Number(s.invoice[k]) || 0));
   return s;
+}
+
+/** Lista corta de textos: sin repetir, de 3 a 40 letras, hasta 8. */
+function cleanList(list: unknown): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of Array.isArray(list) ? list : []) {
+    if (typeof v !== "string") continue;
+    const text = v.replace(/\s+/g, " ").trim().slice(0, 40);
+    const key = text.toLowerCase();
+    if (text.length < 3 || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out.slice(0, 8);
 }
 
 /** Turnos del local: nombre corto y hora de inicio válida, sin repetir hora, de 1 a 4, en el orden de la jornada. */
@@ -118,3 +150,8 @@ export function channelPct(s: Settings, channel: string) {
 }
 
 export const STATION_LABEL: Record<string, string> = { barra: "Barra", cocina: "Cocina" };
+
+/** Umbrales de tiempo de una estación (sin estación: los de cocina, que son los más largos). */
+export function kdsThresholds(s: Settings, station: string | null) {
+  return station === "barra" ? { warn: s.kds.barraWarn, late: s.kds.barraLate } : { warn: s.kds.cocinaWarn, late: s.kds.cocinaLate };
+}

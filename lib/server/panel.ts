@@ -224,6 +224,11 @@ export async function saveSettings(staff: Staff, next: Settings) {
   inRange(num("labor", "alertPct"), 10, 60, "la alerta de mano de obra");
   inRange(num("labor", "arlClass"), 1, 5, "la clase de riesgo ARL");
   inRange(num("security", "lockMinutes"), 0, 120, "el bloqueo por inactividad");
+  for (const st of ["barra", "cocina"]) {
+    inRange(num("kds", `${st}Warn`), 1, 60, `el aviso amarillo de ${st}`);
+    inRange(num("kds", `${st}Late`), 2, 120, `el aviso rojo de ${st}`);
+    if (num("kds", `${st}Late`) <= num("kds", `${st}Warn`)) throw new UserError(`En ${st}, el rojo tiene que llegar después del amarillo`);
+  }
   for (const k of ["rangeFrom", "rangeTo"]) inRange(num("invoice", k), 0, 999_999_999, "el rango de facturación");
   const clean = mergeSettings(next);
   for (const key of ["primary", "accent"] as const) if (!/^#[0-9a-fA-F]{6}$/.test(clean.theme[key])) throw new UserError("Revisa los colores (formato #RRGGBB)");

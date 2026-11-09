@@ -4,7 +4,7 @@ import { minutesSince } from "../core/time";
 import { normalizePhone } from "../utils";
 import { can, requireAuth, verifyAuthorizer, type AuthInput, type Staff } from "./auth";
 import { audit, bump, getBusiness, nextNumber } from "./business";
-import { checkLabel, loadCheck, moveStock, totalsFor, type CheckItem, type Delivery, type Mod } from "./checks";
+import { checkLabel, isClosed, loadCheck, moveStock, totalsFor, type CheckItem, type Delivery, type Mod } from "./checks";
 import { getDb } from "./db";
 import { UserError } from "./errors";
 import { closeCheckTx, currentCashSession } from "./payments";
@@ -129,7 +129,7 @@ export async function dispatchDelivery(staff: Staff, checkId: string) {
     await tx.one("select id from checks where id = $1 and business_id = $2 for update", [checkId, staff.business_id]);
     const check = await loadCheck(staff.business_id, checkId, tx);
     if (!check || check.kind !== "domicilio") throw new UserError("Domicilio no encontrado");
-    if (check.status === "paid" || check.status === "void") throw new UserError("Este domicilio ya salió");
+    if (isClosed(check.status)) throw new UserError("Este domicilio ya salió");
     if (check.channel === "propio") throw new UserError("Cobra el domicilio propio en el cobro de la cuenta");
     if (!check.delivery?.packedAt) throw new UserError("Empaca y revisa el pedido antes de entregarlo");
     if (check.items.some((i) => i.status === "draft" || i.status === "sent")) throw new UserError("Hay productos que no están listos: la bolsa se revisa otra vez");
@@ -154,7 +154,7 @@ export async function cancelDelivery(staff: Staff, checkId: string, input: { rea
   await db.tx(async (tx) => {
     const row = await tx.one<{ status: string; kind: string; number: number }>("select status, kind, number from checks where id = $1 and business_id = $2 for update", [checkId, staff.business_id]);
     if (!row || row.kind !== "domicilio") throw new UserError("Domicilio no encontrado");
-    if (row.status === "paid" || row.status === "void") throw new UserError("Este domicilio ya se cerró");
+    if (isClosed(row.status)) throw new UserError("Este domicilio ya se cerró");
     const paid = await tx.one("select 1 from payments where check_id = $1 and status in ('ok','pending')", [checkId]);
     if (paid) throw new UserError("Tiene pagos registrados: quítalos antes de cancelar");
     const items = await tx.query<{ id: string; product_id: string | null; qty: number; status: string; name: string }>(
@@ -165,7 +165,7 @@ export async function cancelDelivery(staff: Staff, checkId: string, input: { rea
     const who = requireAuth(sent.length > 0 && !can.voidSent(staff), staff, authorizedBy, "void");
     await tx.query("delete from check_items where check_id = $1 and status = 'draft'", [checkId]);
     if (sent.length) {
-      await tx.query("update check_items set status = 'void', void_reason = $2, void_by = $3, void_waste = (status <> 'sent') where check_id = $1 and status in ('sent','ready','delivered')", [
+      await tx.query("update check_items set status = 'void', void_reason = $2, void_by = $3, void_waste = (status <> 'sent'), voided_at = now() where check_id = $1 and status in ('sent','ready','delivered')", [
         checkId,
         `Pedido cancelado: ${reason}`,
         who.id,

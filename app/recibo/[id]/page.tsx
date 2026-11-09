@@ -36,6 +36,7 @@ export default async function ReceiptPage({ params, searchParams }: { params: Pr
     const check = await loadCheck(staff.business_id, id);
     if (!check) notFound();
     if (check.status === "open" || check.status === "bill") redirect(`/cuenta/${id}`);
+    if (check.status === "merged" && check.merged_into) redirect(`/cuenta/${check.merged_into}`);
     const back = check.kind === "domicilio" ? "/domicilios" : "/salon";
     return (
       <main className="min-h-dvh bg-cal px-4 py-10">

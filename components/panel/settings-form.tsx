@@ -1,6 +1,6 @@
 "use client";
 
-import { RotateCcw } from "lucide-react";
+import { Plus, RotateCcw, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { applyTaxAction, resetDemoAction, saveSettingsAction } from "@/app/(pos)/panel/actions";
@@ -173,6 +173,23 @@ export function SettingsForm({
           {text("security", "lockMinutes", "Bloquear la tablet tras estos minutos sin uso", { type: "number", hint: "Pide otra vez el PIN de quien tiene la sesión. 0 la deja sin bloqueo." })}
           {text("receipt", "footer", "Mensaje al final del recibo")}
         </Card>
+        <Card title="Barra y cocina">
+          <p className="text-[13px] text-humo">A los cuántos minutos un pedido se pone amarillo y después rojo en la pantalla de cada estación.</p>
+          <div className="grid grid-cols-2 gap-3">
+            {text("kds", "barraWarn", "Barra: amarillo a los (min)", { type: "number" })}
+            {text("kds", "barraLate", "Barra: rojo a los (min)", { type: "number" })}
+            {text("kds", "cocinaWarn", "Cocina: amarillo a los (min)", { type: "number" })}
+            {text("kds", "cocinaLate", "Cocina: rojo a los (min)", { type: "number" })}
+          </div>
+          <p className="text-[13px] text-humo">El sonido se prende en cada pantalla y la tablet lo recuerda.</p>
+        </Card>
+        <Card title="Motivos y notas rápidas">
+          <p className="text-[13px] text-humo">Un toque en vez de escribir. Siempre se puede escribir otro. Hasta 8 por lista.</p>
+          <ListEditor label="Para anular" items={s.reasons.void} onChange={(v) => up("reasons", "void", v)} placeholder="Ej. Se cayó al servir" />
+          <ListEditor label="Para dar cortesía" items={s.reasons.courtesy} onChange={(v) => up("reasons", "courtesy", v)} placeholder="Ej. Aniversario" />
+          <ListEditor label="Para descontar" items={s.reasons.discount} onChange={(v) => up("reasons", "discount", v)} placeholder="Ej. Convenio empresa" />
+          <ListEditor label="Notas para barra y cocina" items={s.reasons.notes} onChange={(v) => up("reasons", "notes", v)} placeholder="Ej. Término medio" />
+        </Card>
         <Card title="Resolución de facturación (DIAN)">
           <div className="grid grid-cols-2 gap-3">
             {text("invoice", "prefix", "Prefijo", { hint: "Letras y números, hasta 4. Cada sede usa el suyo." })}
@@ -280,6 +297,54 @@ export function SettingsForm({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Lista corta editable: cada texto es una pastilla que se quita con la X; abajo se agrega otro. */
+function ListEditor({ label, items, onChange, placeholder }: { label: string; items: string[]; onChange: (v: string[]) => void; placeholder: string }) {
+  const [draft, setDraft] = useState("");
+  const text = draft.replace(/\s+/g, " ").trim();
+  const canAdd = text.length >= 3 && items.length < 8 && !items.some((x) => x.toLowerCase() === text.toLowerCase());
+  const add = () => {
+    if (!canAdd) return;
+    onChange([...items, text.slice(0, 40)]);
+    setDraft("");
+  };
+  return (
+    <div>
+      <p className="text-sm font-semibold text-humo">{label}</p>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {items.map((x) => (
+          <span key={x} className="inline-flex items-center gap-1 rounded-full bg-cal py-1 pr-1 pl-3 text-sm font-semibold">
+            {x}
+            <button type="button" className="flex size-7 items-center justify-center rounded-full hover:bg-tinto/8" onClick={() => onChange(items.filter((y) => y !== x))} aria-label={`Quitar ${x}`}>
+              <X size={14} />
+            </button>
+          </span>
+        ))}
+        {!items.length ? <span className="text-sm text-humo">Sin motivos de lista: se escriben cada vez.</span> : null}
+      </div>
+      {items.length < 8 ? (
+        <div className="mt-2 flex gap-2">
+          <input
+            className="h-11 min-w-0 flex-1 rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto"
+            value={draft}
+            maxLength={40}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                add();
+              }
+            }}
+            placeholder={placeholder}
+          />
+          <button type="button" className={btn("soft", "md")} disabled={!canAdd} onClick={add}>
+            <Plus size={16} /> Agregar
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -22,6 +22,7 @@ export default async function PayPage({ params }: { params: Promise<{ id: string
   if (!check) notFound();
   if (check.status === "void") redirect("/salon?cuenta=descartada");
   if (check.status === "paid") redirect(`/recibo/${check.id}`);
+  if (check.status === "merged") redirect(check.merged_into ? `/cuenta/${check.merged_into}/cobro` : "/salon");
   const s = biz.settings;
   return (
     <PaymentScreen

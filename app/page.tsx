@@ -16,13 +16,13 @@ const STEPS: ShiftStep[] = [
   {
     time: at("5:00", "p"),
     title: "El salón, en vivo",
-    text: "Cada mesa dice si está ocupada, si pidió la cuenta o si hay algo listo para llevar. Y avisa cuándo ofrecer otra ronda.",
+    text: "Cada mesa dice si pidió la cuenta, si hay algo listo para llevar o si es hora de otra ronda. Las cuentas se separan, se unen o cambian de mesa en dos toques.",
     shot: "/shots/salon.webp",
   },
   {
     time: at("6:30", "p"),
     title: "Barra y cocina sin papel",
-    text: "Los pedidos llegan con su tiempo corriendo, un sonido y la ficha de cada plato con los gramos de la receta, para que salga igual en todas las sedes. En el mostrador, una pantalla de turnos llama a cada cliente por su número.",
+    text: "Los pedidos llegan con su tiempo y un sonido por estación. Las alergias salen en rojo, lo anulado avisa hasta que alguien lo ve y cada plato trae la ficha con los gramos de la receta. En el mostrador, una pantalla de turnos llama a cada cliente por su número.",
     shot: "/shots/barra.webp",
   },
   {

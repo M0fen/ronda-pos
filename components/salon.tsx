@@ -1,6 +1,6 @@
 "use client";
 
-import { BellRing, Check, ChevronRight, Clock, Receipt, ShoppingBag, Users, Utensils, Wine, X } from "lucide-react";
+import { BellRing, Check, ChevronRight, Clock, Pause, Receipt, ShoppingBag, Split, Users, Utensils, Wine, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
@@ -132,7 +132,13 @@ export function Salon({ floor }: { floor: Floor }) {
                       </span>
                     </span>
                     {/* "Listo" solo cuando todo está listo; mientras tanto, cuántos van */}
-                    {c.ready && !c.inStation ? <Pill tone="green">Listo</Pill> : c.ready ? <Pill tone="yellow">{`${c.ready} de ${c.ready + c.inStation} listos`}</Pill> : null}
+                    {c.ready && !c.inStation ? (
+                      <Pill tone="green">Listo</Pill>
+                    ) : c.ready ? (
+                      <Pill tone="yellow">{`${c.ready} de ${c.ready + c.inStation} listos`}</Pill>
+                    ) : c.held && !c.inStation ? (
+                      <Pill tone="blue">{`${c.held} retenido${c.held > 1 ? "s" : ""}`}</Pill>
+                    ) : null}
                     <Money value={c.total} className="font-semibold" />
                     <ChevronRight size={18} className="text-humo" />
                   </Link>
@@ -220,8 +226,21 @@ function useFlashOnChange(sig: string) {
 }
 
 function TableTile({ table, onOpen, plan = false }: { table: TableView; onOpen: () => void; plan?: boolean }) {
-  const c = table.check;
-  const flash = useFlashOnChange(c ? `${c.id}:${c.status}:${c.ready}:${c.inStation}:${c.total}` : "libre");
+  const main = table.check;
+  // Con cuentas aparte, la mesa muestra todo junto: el total, lo listo, lo que se prepara y lo retenido
+  const all = main ? [main, ...table.splits] : [];
+  const c = main
+    ? {
+        ...main,
+        total: all.reduce((s, x) => s + x.total, 0),
+        ready: all.reduce((s, x) => s + x.ready, 0),
+        inStation: all.reduce((s, x) => s + x.inStation, 0),
+        held: all.reduce((s, x) => s + x.held, 0),
+        status: all.some((x) => x.status === "bill") ? ("bill" as const) : main.status,
+        minutesIdle: Math.min(...all.map((x) => x.minutesIdle)),
+      }
+    : null;
+  const flash = useFlashOnChange(c ? `${c.id}:${c.status}:${c.ready}:${c.inStation}:${c.held}:${c.total}:${all.length}` : "libre");
   const round = plan && table.shape === "round";
   const shape = round ? "aspect-square h-full max-w-full mx-auto rounded-full" : "h-full w-full rounded-[22px]";
   if (!c)
@@ -242,13 +261,16 @@ function TableTile({ table, onOpen, plan = false }: { table: TableView; onOpen: 
       </button>
     );
   const bill = c.status === "bill";
-  const idle = !bill && c.minutesIdle >= IDLE_MINUTES && c.inStation === 0;
+  const waiting = !bill && c.held > 0 && c.inStation === 0;
+  const idle = !bill && !waiting && c.minutesIdle >= IDLE_MINUTES && c.inStation === 0;
   const band = c.ready ? "bg-puerta text-white" : bill ? "bg-fachada text-tinto" : "bg-balcon text-white";
   const chip = c.ready
     ? { cls: "bg-puerta-soft text-puerta-2", icon: <Check className="size-[1.1em]" strokeWidth={3} />, long: `${c.ready} listo${c.ready > 1 ? "s" : ""} para llevar`, short: `${c.ready} listo${c.ready > 1 ? "s" : ""}`, count: String(c.ready) }
     : bill
       ? { cls: "bg-fachada-soft text-tinto", icon: <Receipt className="size-[1.1em]" />, long: "Pidió la cuenta", short: "Cuenta", count: "" }
-      : idle
+      : waiting
+        ? { cls: "bg-balcon-soft text-balcon-2", icon: <Pause className="size-[1.1em]" />, long: `${c.held} retenido${c.held > 1 ? "s" : ""} por enviar`, short: `${c.held} retenido${c.held > 1 ? "s" : ""}`, count: String(c.held) }
+        : idle
         ? { cls: "bg-fachada-soft text-tinto", icon: <Clock className="size-[1.1em]" />, long: "Ofrece otra ronda", short: "Otra ronda", count: "" }
         : c.inStation
           ? { cls: "bg-tinto/6 text-tinto-2", icon: <Utensils className="size-[1.1em]" />, long: `${c.inStation} en preparación`, short: `${c.inStation} en prep.`, count: String(c.inStation) }
@@ -263,12 +285,17 @@ function TableTile({ table, onOpen, plan = false }: { table: TableView; onOpen: 
         round && "text-center",
         c.ready > 0 && "ready-pulse ring-2 ring-puerta",
       )}
-      aria-label={`Mesa ${table.name}, ${bill ? "pidió la cuenta" : "ocupada"}, ${cop(c.total)}`}
+      aria-label={`Mesa ${table.name}, ${bill ? "pidió la cuenta" : "ocupada"}${all.length > 1 ? `, ${all.length} cuentas` : ""}, ${cop(c.total)}`}
     >
       <span className={cn("flex shrink-0 items-center gap-1.5 px-[8cqw]", band, round ? "h-[42%] items-end justify-center pb-[5cqw]" : "h-[40%] justify-between")}>
         <span className="text-[clamp(1.2rem,15cqw,2.25rem)] font-bold leading-none [font-stretch:110%]">{table.name}</span>
         <span className="inline-flex items-center gap-1 text-[clamp(0.72rem,6.5cqw,0.9rem)] font-medium opacity-80">
-          <Users className="size-[1.05em]" /> {c.guests}
+          <Users className="size-[1.05em]" /> {all.reduce((n, x) => n + x.guests, 0)}
+          {all.length > 1 ? (
+            <span className="ml-0.5 inline-flex items-center gap-0.5" title={`${all.length} cuentas`}>
+              <Split className="size-[1.05em]" /> {all.length}
+            </span>
+          ) : null}
         </span>
       </span>
       {round ? (

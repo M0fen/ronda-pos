@@ -469,4 +469,35 @@ create index audit_action on audit_log (business_id, action, created_at);
       }
     },
   },
+  {
+    // Barra y cuentas: alergia, puesto y retenidos por producto; anulaciones que barra y cocina ven hasta marcarlas
+    // como vistas; cuentas aparte en la misma mesa (split_of) y cuentas unidas (merged_into)
+    version: 5,
+    sql: `
+alter table check_items add column allergy boolean not null default false;
+alter table check_items add column held boolean not null default false;
+alter table check_items add column seat int;
+alter table check_items add column voided_at timestamptz;
+alter table check_items add column void_seen_at timestamptz;
+create index check_items_voided on check_items (business_id, voided_at) where voided_at is not null;
+
+alter table checks add column split_of uuid references checks(id) on delete set null;
+alter table checks add column merged_into uuid references checks(id) on delete set null;
+alter table checks drop constraint checks_status_check;
+alter table checks add constraint checks_status_check check (status in ('open','bill','paid','void','merged'));
+create index checks_split on checks (split_of) where split_of is not null;
+`,
+    // Una mesa puede tener cuentas aparte: el índice único cuenta solo la cuenta principal de cada mesa
+    async run(tx) {
+      await tx.query("drop index if exists checks_one_open_table");
+      const dupes = await tx.one(
+        "select 1 from checks where status in ('open','bill') and table_id is not null and split_of is null group by table_id having count(*) > 1 limit 1",
+      );
+      if (dupes) {
+        console.warn("[db] No se creó checks_one_open_table: hay mesas con dos cuentas principales abiertas. Revísalas y crea el índice a mano.");
+        return;
+      }
+      await tx.query("create unique index checks_one_open_table on checks (table_id) where status in ('open','bill') and table_id is not null and split_of is null");
+    },
+  },
 ];

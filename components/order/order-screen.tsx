@@ -1,6 +1,33 @@
 "use client";
 
-import { ArrowLeft, Ban, Check, CheckCheck, ChefHat, Clock, Gift, MoreHorizontal, Receipt, Search, Send, Star, StickyNote, UserRound, Users, X } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRightLeft,
+  Ban,
+  Check,
+  CheckCheck,
+  ChefHat,
+  Clock,
+  Gift,
+  LayoutGrid,
+  Merge,
+  MoreHorizontal,
+  Pause,
+  Percent,
+  Play,
+  Receipt,
+  Repeat2,
+  Search,
+  Send,
+  Split,
+  Star,
+  StickyNote,
+  Trash2,
+  TriangleAlert,
+  UserRound,
+  Users,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useOptimistic, useState, useTransition } from "react";
@@ -9,10 +36,14 @@ import {
   attachCustomerAction,
   billAction,
   changeDraftAction,
+  changeWaiterAction,
   courtesyAction,
   deliveredAction,
   discardCheckAction,
   discountAction,
+  mergeChecksAction,
+  moveItemsAction,
+  repeatRoundAction,
   sendRoundAction,
   soldOutAction,
   updateCheckAction,
@@ -28,7 +59,21 @@ import { cn } from "@/lib/utils";
 import { Sheet } from "../sheet";
 import { report, toast } from "../toast";
 import { AuthSheet, type AuthLevel, type AuthRequest, type Authorizer } from "../auth-sheet";
-import { CustomerSheet, DiscountSheet, GuestsSheet, ItemSheet, ModifierSheet, MoveSheet, NoteSheet, PriceTag, Stepper } from "./order-sheets";
+import {
+  CustomerSheet,
+  DiscountSheet,
+  DraftSheet,
+  GuestsSheet,
+  ItemSheet,
+  MergeSheet,
+  ModifierSheet,
+  MoveItemsSheet,
+  MoveSheet,
+  PriceTag,
+  Stepper,
+  WaiterSheet,
+  type OpenCheckOption,
+} from "./order-sheets";
 
 type Result = { ok: boolean; error?: string; message?: string; data?: unknown; fields?: Record<string, string> };
 type Auth = { id: string; pin: string };
@@ -44,6 +89,10 @@ export function OrderScreen({
   rules,
   authorizers,
   meId,
+  siblings,
+  others,
+  team,
+  lists,
 }: {
   check: CheckView;
   menu: Menu;
@@ -52,6 +101,14 @@ export function OrderScreen({
   rules: { discountLimitPct: number; loyaltyGoal: number; reward: string; loyalty: boolean };
   authorizers: Authorizer[];
   meId: string;
+  /** Las otras cuentas de la misma mesa (cuentas aparte) */
+  siblings: { id: string; label: string; total: number }[];
+  /** Otras cuentas abiertas, para pasar productos o unirlas */
+  others: OpenCheckOption[];
+  /** Quiénes pueden llevar la cuenta */
+  team: { id: string; name: string; color: string }[];
+  /** Motivos y notas rápidas del local */
+  lists: { void: string[]; courtesy: string[]; discount: string[]; notes: string[] };
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -65,8 +122,9 @@ export function OrderScreen({
   const [stockMode, setStockMode] = useState(false);
   const [modProduct, setModProduct] = useState<MenuProduct | null>(null);
   const [itemSheet, setItemSheet] = useState<CheckItem | null>(null);
-  const [noteItem, setNoteItem] = useState<CheckItem | null>(null);
-  const [sheet, setSheet] = useState<"menu" | "discount" | "customer" | "move" | "guests" | null>(null);
+  const [draftItem, setDraftItem] = useState<CheckItem | null>(null);
+  const [moving, setMoving] = useState<{ mode: "move" | "split"; preselect: string | null } | null>(null);
+  const [sheet, setSheet] = useState<"menu" | "discount" | "customer" | "move" | "guests" | "merge" | "waiter" | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [auth, setAuth] = useState<(AuthRequest & { run: (auth: Auth) => Promise<Result>; done?: string }) | null>(null);
 
@@ -75,6 +133,12 @@ export function OrderScreen({
     [items, check.discount_pct],
   );
   const drafts = items.filter((i) => i.status === "draft");
+  // Lo retenido no sale con el envío: se manda aparte cuando la mesa esté lista
+  const sendNow = drafts.filter((i) => !i.held);
+  const heldDrafts = drafts.filter((i) => i.held);
+  const sendUnits = sendNow.reduce((s, i) => s + i.qty, 0);
+  const heldUnits = heldDrafts.reduce((s, i) => s + i.qty, 0);
+  const movable = items.filter((i) => i.status !== "void" && !i.id.startsWith("tmp-"));
   // Una cuenta toda en cortesía (total $0) también se cierra
   const chargeable = items.some((i) => i.status !== "draft" && i.status !== "void");
   const ready = items.filter((i) => i.status === "ready");
@@ -82,6 +146,8 @@ export function OrderScreen({
   const sentRounds = useMemo(() => {
     const map = new Map<number, CheckItem[]>();
     for (const i of items.filter((x) => x.status !== "draft")) map.set(i.round, [...(map.get(i.round) ?? []), i]);
+    // Dentro de cada ronda, por puesto: así se lee quién pidió qué
+    for (const list of map.values()) list.sort((a, b) => (a.seat ?? 99) - (b.seat ?? 99));
     return [...map.entries()].sort((a, b) => a[0] - b[0]);
   }, [items]);
   const countByProduct = useMemo(() => {
@@ -143,6 +209,10 @@ export function OrderScreen({
           delivered_at: null,
           void_reason: null,
           created_at: new Date().toISOString(),
+          allergy: false,
+          held: false,
+          seat: null,
+          voided_at: null,
         },
       });
       const r = await addItemsAction(check.id, [{ productId: product.id, qty: input.qty, modifierIds: input.modifierIds, note: input.note }]);
@@ -164,15 +234,38 @@ export function OrderScreen({
     });
   }
 
-  function send() {
+  function send(held = false) {
     start(async () => {
-      const r = await sendRoundAction(check.id);
+      const r = await sendRoundAction(check.id, held);
       if (r.ok && r.data) {
         const st = r.data.stations.map((s: string) => (s === "cocina" ? "cocina" : "barra")).join(" y ");
-        toast(`Enviado a ${st}`);
+        toast(held ? `Lo retenido salió a ${st}` : `Enviado a ${st}`);
         setPanelOpen(false);
         router.refresh();
       } else report(r);
+    });
+  }
+
+  /** Otra ronda igual: queda por enviar para revisarla. */
+  function repeat(round: number) {
+    start(async () => {
+      const r = await repeatRoundAction(check.id, round);
+      if (!r.ok || !r.data) return void report(r);
+      toast(r.data.missing.length ? `Agregado para enviar. No hay: ${r.data.missing.join(", ")}` : `Ronda ${round} agregada: revísala y envíala`);
+      router.refresh();
+    });
+  }
+
+  function move(input: Parameters<typeof moveItemsAction>[1]) {
+    setMoving(null);
+    start(async () => {
+      const r = await moveItemsAction(check.id, input);
+      if (!r.ok || !r.data) return void report(r);
+      const d = r.data;
+      toast("split" in input.to ? `Listo: ${d.name || `cuenta #${d.number}`} en la mesa` : `Pasado a la cuenta #${d.number}`);
+      // Si esta cuenta quedó vacía se cerró: se sigue en la cuenta a donde se fue todo
+      if (d.closed) router.replace(`/cuenta/${d.id}`);
+      else router.refresh();
     });
   }
 
@@ -198,6 +291,19 @@ export function OrderScreen({
 
   const lines = (
     <div className="flex-1 overflow-y-auto px-4 py-3">
+      {siblings.length ? (
+        <div className="mb-3 rounded-2xl bg-tinto/5 p-2">
+          <p className="px-1 pb-1.5 text-[12px] font-semibold text-humo">En esta mesa también</p>
+          <div className="flex flex-wrap gap-1.5">
+            {siblings.map((x) => (
+              <Link key={x.id} href={`/cuenta/${x.id}`} className="inline-flex items-center gap-2 rounded-xl bg-papel px-3 py-1.5 text-sm font-semibold ring-1 ring-linea hover:ring-tinto">
+                {x.label}
+                <Money value={x.total} className="text-humo" />
+              </Link>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {check.customer ? (
         <button onClick={() => setSheet("customer")} className="mb-3 flex w-full items-center gap-2 rounded-xl bg-puerta-soft px-3 py-2 text-left text-sm">
           <UserRound size={16} className="text-puerta-2" />
@@ -207,35 +313,47 @@ export function OrderScreen({
           </span>
         </button>
       ) : null}
-      {drafts.length ? (
+      {sendNow.length ? (
         <section>
           <p className="mb-1.5 text-[13px] font-bold text-balcon">Por enviar</p>
           <ul className="divide-y divide-linea rounded-2xl bg-balcon-soft/60 px-3">
-            {drafts.map((i) => (
-              <li key={i.id} className="flex items-center gap-2 py-2.5">
-                <Stepper size="sm" value={i.qty} onChange={(v) => changeQty(i, v)} min={1} />
-                <button className="min-w-0 flex-1 text-left" onClick={() => !i.id.startsWith("tmp-") && setNoteItem(i)}>
-                  <span className="block truncate font-semibold leading-tight">{i.name}</span>
-                  {i.modifiers.length || i.note ? (
-                    <span className="block truncate text-[13px] text-humo">{[...i.modifiers.map((m) => m.name), i.note && `“${i.note}”`].filter(Boolean).join(" · ")}</span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-[12px] text-humo">
-                      <StickyNote size={12} /> Nota
-                    </span>
-                  )}
-                </button>
-                <Money value={(i.unit_price + i.modifiers.reduce((s, m) => s + m.price, 0)) * i.qty} className="text-[15px] font-semibold" />
-              </li>
+            {sendNow.map((i) => (
+              <DraftLine key={i.id} item={i} onQty={(v) => changeQty(i, v)} onOpen={() => !i.id.startsWith("tmp-") && setDraftItem(i)} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {heldDrafts.length ? (
+        <section className={cn(sendNow.length > 0 && "mt-4")}>
+          <p className="mb-1.5 flex items-center gap-2 text-[13px] font-bold text-tinto-2">
+            <Pause size={14} />
+            <span className="flex-1">Retenido: sale después</span>
+            {sendNow.length ? (
+              <button className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-balcon hover:bg-balcon-soft" disabled={pending} onClick={() => send(true)}>
+                <Play size={14} /> Enviar ahora
+              </button>
+            ) : null}
+          </p>
+          <ul className="divide-y divide-linea rounded-2xl bg-tinto/5 px-3">
+            {heldDrafts.map((i) => (
+              <DraftLine key={i.id} item={i} onQty={(v) => changeQty(i, v)} onOpen={() => setDraftItem(i)} />
             ))}
           </ul>
         </section>
       ) : null}
       {sentRounds.map(([round, list]) => (
         <section key={round} className="mt-4 first:mt-0">
-          <p className="mb-1 text-[13px] font-bold text-humo">
-            Ronda {round}
-            {list[0]?.sent_at ? ` · ${fmtTime(list[0].sent_at)}` : ""}
-            {list.some((i) => i.source === "qr") ? " · por QR" : ""}
+          <p className="mb-1 flex items-center gap-2 text-[13px] font-bold text-humo">
+            <span className="min-w-0 flex-1 truncate">
+              Ronda {round}
+              {list[0]?.sent_at ? ` · ${fmtTime(list[0].sent_at)}` : ""}
+              {list.some((i) => i.source === "qr") ? " · por QR" : ""}
+            </span>
+            {list.some((i) => i.status !== "void") ? (
+              <button className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-balcon hover:bg-balcon-soft" disabled={pending} onClick={() => repeat(round)} aria-label={`Repetir la ronda ${round}`}>
+                <Repeat2 size={14} /> Repetir
+              </button>
+            ) : null}
           </p>
           <ul className="divide-y divide-linea">
             {list.map((i) => (
@@ -245,9 +363,13 @@ export function OrderScreen({
                   <span className={cn("min-w-0 flex-1", i.status === "void" && "text-humo line-through")}>
                     <span className="block truncate leading-tight">
                       <span className="font-semibold tnum">{i.qty}</span> {i.name}
+                      {i.seat ? <SeatChip n={i.seat} /> : null}
                     </span>
-                    {i.modifiers.length || i.note || i.void_reason ? (
-                      <span className="block truncate text-[13px] text-humo no-underline">{[...i.modifiers.map((m) => m.name), i.note, i.void_reason && `Anulado: ${i.void_reason}`].filter(Boolean).join(" · ")}</span>
+                    {i.allergy || i.modifiers.length || i.note || i.void_reason ? (
+                      <span className="block truncate text-[13px] text-humo no-underline">
+                        {i.allergy ? <TriangleAlert size={12} className="mr-1 inline text-cereza" aria-label="Alergia" /> : null}
+                        {[...i.modifiers.map((m) => m.name), i.note, i.void_reason && `Anulado: ${i.void_reason}`].filter(Boolean).join(" · ")}
+                      </span>
                     ) : null}
                   </span>
                   {i.courtesy ? <Pill tone="green">Cortesía</Pill> : null}
@@ -302,9 +424,14 @@ export function OrderScreen({
         </div>
       </dl>
       <div className="mt-3 flex gap-2">
-        {drafts.length ? (
-          <button className={btn("send", "xl", "flex-1")} disabled={pending || drafts.some((d) => d.id.startsWith("tmp-"))} onClick={send}>
-            <Send size={20} /> Enviar {drafts.reduce((s, i) => s + i.qty, 0)}
+        {sendNow.length ? (
+          <button className={btn("send", "xl", "flex-1")} disabled={pending || sendNow.some((d) => d.id.startsWith("tmp-"))} onClick={() => send()}>
+            <Send size={20} /> Enviar {sendUnits}
+            {heldUnits ? <span className="text-[15px] font-semibold opacity-80">· {heldUnits} esperan</span> : null}
+          </button>
+        ) : heldDrafts.length ? (
+          <button className={btn("dark", "xl", "flex-1")} disabled={pending} onClick={() => send(true)}>
+            <Play size={20} /> Enviar lo retenido ({heldUnits})
           </button>
         ) : (
           <>
@@ -392,8 +519,10 @@ export function OrderScreen({
         {footer}
       </aside>
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-linea bg-papel p-3 md:hidden">
-        <button className={btn(drafts.length ? "send" : "dark", "lg", "w-full justify-between")} onClick={() => setPanelOpen(true)}>
-          <span className="truncate">{drafts.length ? `Ver y enviar (${drafts.reduce((s, i) => s + i.qty, 0)}) · ${check.label}` : `Ver cuenta · ${check.label}`}</span>
+        <button className={btn(sendNow.length ? "send" : "dark", "lg", "w-full justify-between")} onClick={() => setPanelOpen(true)}>
+          <span className="truncate">
+            {sendNow.length ? `Ver y enviar (${sendUnits}) · ${check.label}` : heldDrafts.length ? `${heldUnits} retenidos · ${check.label}` : `Ver cuenta · ${check.label}`}
+          </span>
           <span className="tnum">{cop(totals.total)}</span>
         </button>
       </div>
@@ -413,6 +542,7 @@ export function OrderScreen({
       <ModifierSheet
         product={modProduct}
         groups={menu.groups}
+        notes={lists.notes}
         onClose={() => setModProduct(null)}
         onAdd={(input) => {
           const p = modProduct!;
@@ -420,32 +550,78 @@ export function OrderScreen({
           add(p, input);
         }}
       />
-      <NoteSheet
-        item={noteItem}
-        onClose={() => setNoteItem(null)}
-        onSave={(note) => {
-          const id = noteItem!.id;
-          setNoteItem(null);
-          run(() => changeDraftAction(id, { note }), "", "Nota guardada");
+      <DraftSheet
+        item={draftItem}
+        product={draftItem?.product_id ? menu.products.find((p) => p.id === draftItem.product_id) : undefined}
+        groups={menu.groups}
+        guests={check.guests}
+        notes={lists.notes}
+        onClose={() => setDraftItem(null)}
+        onSave={(patch) => {
+          const id = draftItem!.id;
+          setDraftItem(null);
+          run(() => changeDraftAction(id, patch), "", patch.held ? "Retenido: sale cuando lo mandes" : "Guardado");
+        }}
+        onRemove={() => {
+          const it = draftItem!;
+          setDraftItem(null);
+          changeQty(it, 0);
         }}
       />
       <ItemSheet
         item={itemSheet}
+        reasons={{ void: lists.void, courtesy: lists.courtesy }}
         onClose={() => setItemSheet(null)}
         onDelivered={() => {
           const id = itemSheet!.id;
           setItemSheet(null);
           run(() => deliveredAction(check.id, id), "", "Entregado");
         }}
-        onCourtesy={() => {
+        onCourtesy={(reason) => {
           const it = itemSheet!;
           setItemSheet(null);
-          run((a) => courtesyAction(it.id, a), it.courtesy ? `Quitar la cortesía de ${it.name}` : `Dar ${it.qty} ${it.name} como cortesía`, "Listo");
+          run((a) => courtesyAction(it.id, { reason, auth: a }), it.courtesy ? `Quitar la cortesía de ${it.name}` : `Dar ${it.qty} ${it.name} como cortesía`, "Listo");
         }}
         onVoid={(reason, waste) => {
           const it = itemSheet!;
           setItemSheet(null);
           run((a) => voidItemAction(it.id, { reason, waste, auth: a }), `Anular ${it.qty} ${it.name}`, "Anulado");
+        }}
+        onMove={() => {
+          const it = itemSheet!;
+          setItemSheet(null);
+          setMoving({ mode: "move", preselect: it.id });
+        }}
+      />
+      <MoveItemsSheet
+        open={!!moving}
+        mode={moving?.mode ?? "move"}
+        items={movable}
+        preselect={moving?.preselect ?? null}
+        checks={others}
+        tables={freeTables}
+        onClose={() => setMoving(null)}
+        onMove={move}
+      />
+      <MergeSheet
+        open={sheet === "merge"}
+        here={check.label}
+        checks={others}
+        onClose={() => setSheet(null)}
+        onMerge={(id) => {
+          setSheet(null);
+          run(() => mergeChecksAction(check.id, id), "", "Cuentas unidas");
+        }}
+      />
+      <WaiterSheet
+        open={sheet === "waiter"}
+        current={check.opened_by}
+        team={team}
+        onClose={() => setSheet(null)}
+        onPick={(id) => {
+          setSheet(null);
+          const name = team.find((p) => p.id === id)?.name ?? "otra persona";
+          run((a) => changeWaiterAction(check.id, { staffId: id, auth: a }), `Pasar la cuenta a ${name}`, `Ahora la atiende ${name}`);
         }}
       />
       <AuthSheet
@@ -469,6 +645,7 @@ export function OrderScreen({
         open={sheet === "discount"}
         current={check.discount_pct}
         limit={rules.discountLimitPct}
+        reasons={lists.discount}
         onClose={() => setSheet(null)}
         onApply={(pct, reason) => {
           setSheet(null);
@@ -504,44 +681,104 @@ export function OrderScreen({
           run(() => updateCheckAction(check.id, { guests }), "", "Listo");
         }}
       />
-      <Sheet open={sheet === "menu"} onClose={() => setSheet(null)} title={check.label}>
-        <div className="grid gap-2">
-          <button className={btn("soft", "lg", "justify-start")} onClick={() => setSheet("move")}>
-            Mover a otra mesa
-          </button>
-          <button className={btn("soft", "lg", "justify-start")} onClick={() => setSheet("guests")}>
-            Cambiar personas ({check.guests})
-          </button>
-          <button className={btn("soft", "lg", "justify-start")} onClick={() => setSheet("discount")}>
-            Descuento {check.discount_pct ? `(${check.discount_pct} %)` : ""}
-          </button>
-          {rules.loyalty ? (
-            <button className={btn("soft", "lg", "justify-start")} onClick={() => setSheet("customer")}>
-              <Gift size={18} /> Cliente y sellos
-            </button>
-          ) : null}
-          {check.status === "bill" ? (
-            <button className={btn("soft", "lg", "justify-start")} onClick={() => (setSheet(null), run(() => billAction(check.id, false), "", "La cuenta sigue abierta"))}>
-              Seguir pidiendo (quitar pre-cuenta)
-            </button>
-          ) : null}
-          {!items.some((i) => i.status !== "draft" && i.status !== "void") ? (
-            <button
-              className={btn("soft", "lg", "justify-start text-cereza")}
-              onClick={() => {
-                setSheet(null);
-                start(async () => {
-                  const r = await discardCheckAction(check.id);
-                  if (report(r)) router.replace("/salon");
-                });
-              }}
-            >
-              Descartar cuenta vacía
-            </button>
-          ) : null}
+      <Sheet open={sheet === "menu"} onClose={() => setSheet(null)} title={check.label} wide>
+        <div className="space-y-4">
+          <MenuGroup title="Productos">
+            <MenuButton icon={<Split size={18} />} label="Separar cuenta" hint="Otra cuenta en la misma mesa" disabled={!movable.length} onClick={() => (setSheet(null), setMoving({ mode: "split", preselect: null }))} />
+            <MenuButton icon={<ArrowRightLeft size={18} />} label="Pasar productos" hint="A otra cuenta o a una mesa libre" disabled={!movable.length} onClick={() => (setSheet(null), setMoving({ mode: "move", preselect: null }))} />
+            <MenuButton icon={<Merge size={18} />} label="Unir otra cuenta a esta" hint={others.length ? "Se cobran juntas" : "No hay otras abiertas"} disabled={!others.length} onClick={() => setSheet("merge")} />
+          </MenuGroup>
+          <MenuGroup title="Mesa y equipo">
+            {check.kind !== "domicilio" ? <MenuButton icon={<LayoutGrid size={18} />} label="Cambiar de mesa" hint={check.table_name ? `Ahora en la mesa ${check.table_name}` : "Pasarla a una mesa"} onClick={() => setSheet("move")} /> : null}
+            <MenuButton icon={<UserRound size={18} />} label="Cambiar mesero" hint={check.waiter_name ? `La lleva ${check.waiter_name}` : "Sin mesero"} onClick={() => setSheet("waiter")} />
+            <MenuButton icon={<Users size={18} />} label="Personas" hint={`${check.guests} en la cuenta`} onClick={() => setSheet("guests")} />
+          </MenuGroup>
+          <MenuGroup title="Cobro">
+            <MenuButton icon={<Percent size={18} />} label="Descuento" hint={check.discount_pct ? `${check.discount_pct} % · ${check.discount_reason ?? ""}` : "Con motivo"} onClick={() => setSheet("discount")} />
+            {rules.loyalty ? <MenuButton icon={<Gift size={18} />} label="Cliente y sellos" hint={check.customer ? (check.customer.name || check.customer.phone) : "Programa de sellos"} onClick={() => setSheet("customer")} /> : null}
+            {check.status === "bill" ? (
+              <MenuButton icon={<Receipt size={18} />} label="Seguir pidiendo" hint="Quita la pre-cuenta" onClick={() => (setSheet(null), run(() => billAction(check.id, false), "", "La cuenta sigue abierta"))} />
+            ) : null}
+            {!items.some((i) => i.status !== "draft" && i.status !== "void") ? (
+              <MenuButton
+                icon={<Trash2 size={18} />}
+                label="Descartar cuenta vacía"
+                hint="Se abrió por error"
+                danger
+                onClick={() => {
+                  setSheet(null);
+                  start(async () => {
+                    const r = await discardCheckAction(check.id);
+                    if (report(r)) router.replace("/salon");
+                  });
+                }}
+              />
+            ) : null}
+          </MenuGroup>
         </div>
       </Sheet>
     </div>
+  );
+}
+
+function MenuGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <p className="mb-1.5 text-[13px] font-bold text-humo">{title}</p>
+      <div className="grid gap-2 sm:grid-cols-2">{children}</div>
+    </section>
+  );
+}
+
+function MenuButton({ icon, label, hint, onClick, disabled, danger }: { icon: React.ReactNode; label: string; hint?: string; onClick: () => void; disabled?: boolean; danger?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn("flex min-h-14 items-center gap-3 rounded-2xl bg-papel px-3.5 py-2.5 text-left ring-1 ring-linea-2 transition hover:ring-tinto disabled:opacity-45 disabled:hover:ring-linea-2", danger && "text-cereza")}
+    >
+      <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-xl", danger ? "bg-cereza-soft" : "bg-tinto/5")}>{icon}</span>
+      <span className="min-w-0">
+        <span className="block font-semibold leading-tight">{label}</span>
+        {hint ? <span className="block truncate text-[13px] text-humo">{hint}</span> : null}
+      </span>
+    </button>
+  );
+}
+
+function SeatChip({ n }: { n: number }) {
+  return <span className="ml-1.5 rounded bg-tinto/8 px-1 align-middle text-[12px] font-bold text-tinto-2">P{n}</span>;
+}
+
+/** Un producto por enviar: la cantidad se cambia aquí mismo; lo demás (opciones, nota, alergia, puesto, retener), en su hoja. */
+function DraftLine({ item: i, onQty, onOpen }: { item: CheckItem; onQty: (v: number) => void; onOpen: () => void }) {
+  const details = [...i.modifiers.map((m) => m.name), i.note && `“${i.note}”`].filter(Boolean).join(" · ");
+  return (
+    <li className="flex items-center gap-2 py-2.5">
+      <Stepper size="sm" value={i.qty} onChange={onQty} min={1} />
+      <button className="min-w-0 flex-1 text-left" onClick={onOpen}>
+        <span className="block truncate font-semibold leading-tight">
+          {i.name}
+          {i.seat ? <SeatChip n={i.seat} /> : null}
+        </span>
+        {details || i.allergy ? (
+          <span className="block truncate text-[13px] text-humo">
+            {i.allergy ? (
+              <span className="mr-1 inline-flex items-center gap-0.5 font-semibold text-cereza">
+                <TriangleAlert size={12} /> Alergia
+              </span>
+            ) : null}
+            {details}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-[12px] text-humo">
+            <StickyNote size={12} /> Nota, puesto, retener
+          </span>
+        )}
+      </button>
+      <Money value={(i.unit_price + i.modifiers.reduce((s, m) => s + m.price, 0)) * i.qty} className="text-[15px] font-semibold" />
+    </li>
   );
 }
 

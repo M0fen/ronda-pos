@@ -103,6 +103,8 @@ export function PaymentScreen({
   }, [split, parts, owner, splitKey]);
 
   const payable = check.items.filter((i) => i.status !== "void" && !i.courtesy);
+  // El puesto que puso el mesero ya dice de quién es cada cosa: "Cada quien lo suyo" arranca así
+  const ownerOf = (i: { id: string; seat: number | null }) => owner[i.id] ?? (i.seat && i.seat <= Math.max(2, parts) ? i.seat - 1 : 0);
   const pendingTotal = check.pendingPayments.reduce((s, p) => s + p.amount, 0);
   const due = Math.max(0, check.due - pendingTotal);
 
@@ -116,7 +118,7 @@ export function PaymentScreen({
     if (split === "consumo") {
       const people = Math.max(2, parts);
       const raw = Array.from({ length: people }, (_, p) =>
-        payable.filter((i) => (owner[i.id] ?? 0) === p).reduce((s, i) => s + (i.unit_price + i.modifiers.reduce((a, m) => a + m.price, 0)) * i.qty, 0),
+        payable.filter((i) => ownerOf(i) === p).reduce((s, i) => s + (i.unit_price + i.modifiers.reduce((a, m) => a + m.price, 0)) * i.qty, 0),
       );
       const gross = raw.reduce((a, b) => a + b, 0) || 1;
       let assigned = 0;
@@ -266,11 +268,11 @@ export function PaymentScreen({
                 <li key={i.id} className="flex items-center gap-2 py-2">
                   {split === "consumo" ? (
                     <button
-                      onClick={() => setOwner((o) => ({ ...o, [i.id]: ((o[i.id] ?? 0) + 1) % Math.max(2, parts) }))}
+                      onClick={() => setOwner((o) => ({ ...o, [i.id]: (ownerOf(i) + 1) % Math.max(2, parts) }))}
                       className="flex h-8 min-w-14 items-center justify-center rounded-lg bg-balcon px-2 text-sm font-bold text-white"
                       disabled={i.courtesy}
                     >
-                      P{(owner[i.id] ?? 0) + 1}
+                      P{ownerOf(i) + 1}
                     </button>
                   ) : null}
                   <span className="min-w-0 flex-1 truncate">
@@ -364,7 +366,15 @@ export function PaymentScreen({
                     </button>
                   ))}
                 </div>
-                {split === "consumo" ? <p className="mt-2 text-sm text-humo">Toca P1, P2… en cada producto para asignarlo a una persona.</p> : null}
+                {split === "consumo" ? (
+                  <p className="mt-2 text-sm text-humo">
+                    Toca P1, P2… en cada producto para asignarlo a una persona. ¿Cada uno necesita su factura?{" "}
+                    <Link href={`/cuenta/${check.id}`} className="font-semibold text-balcon underline-offset-2 hover:underline">
+                      Sepárala desde la cuenta
+                    </Link>{" "}
+                    (Más opciones → Separar cuenta).
+                  </p>
+                ) : null}
                 <ul className="mt-3 grid gap-2 sm:grid-cols-2">
                   {shares.map((s, i) => {
                     const paid = paidByPart(s.label);

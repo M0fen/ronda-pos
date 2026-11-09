@@ -83,8 +83,25 @@ export interface DemoStaff {
 }
 type Block = { days: number[]; from: string; to: string };
 type TableDef = { n: string; zone: string; seats: number; x: number; y: number; shape: "round" | "square" | "long" };
-type Mods = { name: string; price: number }[];
-type LiveItem = { key: string; qty: number; status: string; sent?: number; ready?: number; mods?: Mods; note?: string; source?: string };
+type Mods = { name: string; price: number; id?: string; group?: string }[];
+type LiveItem = {
+  key: string;
+  qty: number;
+  status: string;
+  sent?: number;
+  ready?: number;
+  mods?: Mods;
+  note?: string;
+  source?: string;
+  /** Alergia (la nota dice a qué), puesto en la mesa y retenido para después */
+  allergy?: boolean;
+  seat?: number;
+  held?: boolean;
+  /** Anulado hace estos minutos, con su motivo y quién lo anuló: barra y cocina lo ven en rojo */
+  voided?: number;
+  reason?: string;
+  voidBy?: string;
+};
 type LiveCheck = {
   key: string;
   kind: "mesa" | "barra" | "llevar" | "domicilio";
@@ -96,6 +113,8 @@ type LiveCheck = {
   by: string;
   status?: string;
   items: LiveItem[];
+  /** Cuenta aparte: la clave de la cuenta principal de la mesa */
+  split?: string;
   channel?: "rappi" | "propio";
   /** Domicilio: código de la plataforma, datos de entrega, hace cuántos minutos se empacó y en cuántos llega el domiciliario */
   delivery?: { code?: string; phone?: string; address?: string; notes?: string; packed?: number; packedBy?: string; rider?: number };
@@ -361,7 +380,31 @@ export const DEMO_SEDES: Sede[] = [
           { key: "coca", qty: 2, status: "delivered", sent: 40, ready: 38 },
         ],
       },
-      { key: "mesa12", kind: "mesa", table: "12", guests: 3, opened: 9, by: "camila", items: [{ key: "smash-doble", qty: 3, status: "sent", sent: 6.25 }] },
+      // Dos de la mesa 9 pagan aparte (cada uno con su factura)
+      {
+        key: "mesa9-aparte",
+        kind: "mesa",
+        table: "9",
+        split: "mesa9",
+        name: "Cuenta 2",
+        guests: 2,
+        opened: 38,
+        by: "juanpablo",
+        items: [{ key: "corona", qty: 2, status: "delivered", sent: 37, ready: 35 }],
+      },
+      {
+        key: "mesa12",
+        kind: "mesa",
+        table: "12",
+        guests: 3,
+        opened: 9,
+        by: "camila",
+        items: [
+          { key: "smash-doble", qty: 1, status: "sent", sent: 6.25, seat: 1 },
+          { key: "smash-doble", qty: 1, status: "sent", sent: 6.25, seat: 2, note: "Sin cebolla" },
+          { key: "smash-doble", qty: 1, status: "sent", sent: 6.25, seat: 3, mods: [{ name: "Tocineta", price: 5000, group: "Adiciones" }] },
+        ],
+      },
       {
         key: "mesa1",
         kind: "mesa",
@@ -370,9 +413,10 @@ export const DEMO_SEDES: Sede[] = [
         opened: 14,
         by: "camila",
         items: [
-          { key: "clasica-papas", qty: 1, status: "delivered", sent: 11.6, ready: 3, mods: [{ name: "Queso", price: 0 }] },
-          { key: "limonada", qty: 1, status: "delivered", sent: 11.6, ready: 8 },
-          { key: "express-nuggets", qty: 1, status: "sent", sent: 11.6 },
+          { key: "clasica-papas", qty: 1, status: "delivered", sent: 11.6, ready: 3, mods: [{ name: "Queso", price: 0 }], seat: 1 },
+          { key: "limonada", qty: 1, status: "delivered", sent: 11.6, ready: 8, seat: 1 },
+          { key: "express-nuggets", qty: 1, status: "sent", sent: 11.6, seat: 2, allergy: true, note: "Sin salsa rosada, alergia al huevo" },
+          { key: "club", qty: 1, status: "void", sent: 11.6, voided: 2.5, reason: "El cliente cambió de opinión", voidBy: "valentina" },
         ],
       },
       {
@@ -398,6 +442,7 @@ export const DEMO_SEDES: Sede[] = [
           { key: "combo-pareja", qty: 1, status: "delivered", sent: 24, ready: 10 },
           { key: "umami", qty: 2, status: "ready", sent: 12.9, ready: 1 },
           { key: "express-costilla", qty: 1, status: "sent", sent: 12.9 },
+          { key: "cuatro-carnes", qty: 1, status: "draft", held: true },
         ],
       },
       {
@@ -1044,13 +1089,15 @@ function randomPhone(r: () => number) {
 const CHECK_COLS: Col[] = [
   ["id", "uuid"], ["business_id", "uuid"], ["number", "int"], ["table_id", "uuid"], ["kind", "text"], ["name", "text"], ["guests", "int"], ["status", "text"],
   ["opened_by", "uuid"], ["opened_at", "timestamptz"], ["closed_by", "uuid"], ["closed_at", "timestamptz"], ["customer_id", "uuid"], ["discount_pct", "int"], ["tip_answer", "text"], ["updated_at", "timestamptz"],
-  ["channel", "text"], ["delivery", "jsonb"],
+  ["channel", "text"], ["delivery", "jsonb"], ["split_of", "uuid"],
 ];
 const ITEM_COLS: Col[] = [
   ["id", "uuid"], ["business_id", "uuid"], ["check_id", "uuid"], ["product_id", "uuid"], ["name", "text"], ["unit_price", "int"], ["qty", "int"], ["modifiers", "jsonb"], ["note", "text"],
   ["station", "text"], ["tax_rate", "numeric"], ["status", "text"], ["round", "int"], ["source", "text"], ["added_by", "uuid"], ["sent_at", "timestamptz"], ["ready_at", "timestamptz"], ["delivered_at", "timestamptz"],
   ["void_reason", "text"], ["void_by", "uuid"], ["created_at", "timestamptz"],
 ];
+/** Lo que está pasando ahora lleva además alergia, puesto, retenido y anulación (el historial no los necesita). */
+const LIVE_ITEM_COLS: Col[] = [...ITEM_COLS, ["allergy", "boolean"], ["seat", "int"], ["held", "boolean"], ["voided_at", "timestamptz"]];
 const PAY_COLS: Col[] = [
   ["id", "uuid"], ["business_id", "uuid"], ["check_id", "uuid"], ["method", "text"], ["amount", "int"], ["tip", "int"], ["received", "int"], ["reference", "text"], ["part", "text"], ["status", "text"],
   ["created_by", "uuid"], ["cash_session_id", "uuid"], ["created_at", "timestamptz"],
@@ -1460,6 +1507,7 @@ async function seedLiveService(db: Tx, s: Sede, now: Date, firstNumber: number, 
       updated_at: ago(1),
       channel: c.channel ?? "local",
       delivery,
+      split_of: c.split ? id("live", c.split) : null,
     });
     // Cada envío a la barra es una ronda: se numeran por orden de envío; lo que no se ha enviado va en la ronda 0
     const sends = [...new Set(c.items.filter((it) => it.sent !== undefined).map((it) => it.sent!))].sort((a, b) => b - a);
@@ -1484,14 +1532,18 @@ async function seedLiveService(db: Tx, s: Sede, now: Date, firstNumber: number, 
         sent_at: it.sent !== undefined ? ago(it.sent) : null,
         ready_at: it.ready !== undefined ? ago(it.ready) : null,
         delivered_at: it.status === "delivered" && it.ready !== undefined ? ago(Math.max(0, it.ready - 2)) : null,
-        void_reason: null,
-        void_by: null,
+        void_reason: it.reason ?? null,
+        void_by: it.voidBy ? staff(it.voidBy) : null,
         created_at: ago(it.sent ?? c.opened),
+        allergy: !!it.allergy,
+        seat: it.seat ?? null,
+        held: !!it.held,
+        voided_at: it.voided !== undefined ? ago(it.voided) : null,
       });
     });
   }
   await bulkInsert(db, "checks", CHECK_COLS, checks);
-  await bulkInsert(db, "check_items", ITEM_COLS, items);
+  await bulkInsert(db, "check_items", LIVE_ITEM_COLS, items);
 
   // Pedidos y llamados desde la carta QR, en la sede principal
   if (s.key === MAIN)
