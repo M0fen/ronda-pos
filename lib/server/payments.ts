@@ -90,23 +90,35 @@ async function paymentContext(staff: Staff, input: PaymentInput): Promise<Paymen
   return { biz, method, amount, tip, key: attemptKeyOf(input.attemptKey) };
 }
 
+/** La parte de la cuenta que paga ("Parte 2 de 3", "Persona 1"), como se guarda. */
+const partOf = (input: PaymentInput) => (input.part ?? "").slice(0, 30);
+
 /**
  * ¿Este intento ya quedó? Pasa cuando el pago se guardó pero la respuesta no llegó y la pantalla lo reintenta.
  * Va con la cuenta bloqueada y antes de cualquier otra revisión: aunque la cuenta ya esté paga o cerrada, se responde lo que quedó.
+ * Si con la misma llave llega otro pago (otra parte, otro valor u otro medio), no se da por hecho: se avisa cuál fue el que quedó.
  */
-async function priorAttempt(tx: Tx, staff: Staff, check: CheckView, key: string | null): Promise<PaymentResult | null> {
-  if (!key) return null;
-  const prior = await tx.one<{ check_id: string; amount: number; tip: number; received: number | null; status: string }>(
-    "select check_id, amount, tip, received, status from payments where business_id = $1 and attempt_key = $2",
-    [staff.business_id, key],
+async function priorAttempt(tx: Tx, staff: Staff, check: CheckView, p: PaymentContext, input: PaymentInput): Promise<PaymentResult | null> {
+  if (!p.key) return null;
+  const prior = await tx.one<{ check_id: string; method: string; amount: number; tip: number; received: number | null; part: string; status: string }>(
+    "select check_id, method, amount, tip, received, part, status from payments where business_id = $1 and attempt_key = $2",
+    [staff.business_id, p.key],
   );
   if (!prior) return null;
   if (prior.check_id !== check.id) throw new UserError("Ese intento de pago ya se usó en otra cuenta. Recarga la pantalla y vuelve a intentarlo.");
   if (prior.status !== "ok") throw new UserError("Ese pago ya se había registrado y después se quitó. Si hay que cobrarlo otra vez, regístralo de nuevo.");
+  if (prior.method !== p.method || prior.amount !== p.amount || prior.tip !== p.tip || prior.part !== partOf(input)) {
+    const what = `${METHOD_LABEL[prior.method] ?? prior.method} por ${cop(prior.amount + prior.tip)}${prior.part ? ` (${prior.part})` : ""}`;
+    throw new UserError(`El intento anterior sí había quedado registrado: ${what}. Revisa los pagos de la cuenta y registra de nuevo lo que falte.`);
+  }
   return { change: prior.received !== null ? Math.max(0, prior.received - prior.amount - prior.tip) : 0, due: check.due, repeated: true };
 }
 
-/** El pago dentro de una transacción ya abierta y con la cuenta bloqueada. Lo usan registrar un pago y «efectivo exacto y cerrar». */
+/**
+ * El pago dentro de una transacción ya abierta y con la cuenta bloqueada. Lo usan registrar un pago y «efectivo exacto y cerrar».
+ * No avisa el cambio (bump): eso lo hace quien llama, al final de su transacción. El pulso es una sola fila por sede y, si se
+ * toma a la mitad, dos cobros que cierran a la vez se pueden bloquear entre sí con Postgres real.
+ */
 async function registerPaymentTx(tx: Tx, staff: Staff, check: CheckView, p: PaymentContext, input: PaymentInput): Promise<PaymentResult> {
   const { method, amount, tip } = p;
   if (isClosed(check.status)) throw new UserError("Esta cuenta ya está cerrada");
@@ -133,11 +145,10 @@ async function registerPaymentTx(tx: Tx, staff: Staff, check: CheckView, p: Paym
     `insert into payments (business_id, check_id, method, amount, tip, received, reference, part, created_by, cash_session_id, attempt_key)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      on conflict (business_id, attempt_key) where attempt_key is not null do nothing returning id`,
-    [staff.business_id, check.id, method, amount, tip, received, reference, (input.part ?? "").slice(0, 30), staff.id, session.id, p.key],
+    [staff.business_id, check.id, method, amount, tip, received, reference, partOf(input), staff.id, session.id, p.key],
   );
   if (!row) throw new UserError("Ese intento de pago ya se usó en otra cuenta. Recarga la pantalla y vuelve a intentarlo.");
   await tx.query("update checks set status = 'bill', tip_answer = coalesce(tip_answer, $2), updated_at = now() where id = $1", [check.id, tip > 0 ? "si" : null]);
-  await bump(tx, staff.business_id);
   return { change: received !== null ? received - amount - tip : 0, due: check.due - amount, repeated: false };
 }
 
@@ -146,7 +157,11 @@ export async function registerPayment(staff: Staff, checkId: string, input: Paym
   const db = await getDb();
   return db.tx(async (tx) => {
     const check = await lockCheck(tx, staff.business_id, checkId);
-    return (await priorAttempt(tx, staff, check, p.key)) ?? (await registerPaymentTx(tx, staff, check, p, input));
+    const prior = await priorAttempt(tx, staff, check, p, input);
+    if (prior) return prior;
+    const paid = await registerPaymentTx(tx, staff, check, p, input);
+    await bump(tx, staff.business_id);
+    return paid;
   });
 }
 
@@ -160,7 +175,7 @@ export async function payAndClose(staff: Staff, checkId: string, input: { paymen
   const db = await getDb();
   return db.tx(async (tx) => {
     const check = await lockCheck(tx, staff.business_id, checkId);
-    const prior = await priorAttempt(tx, staff, check, p.key);
+    const prior = await priorAttempt(tx, staff, check, p, input.payment);
     if (prior) {
       // Si ese intento también alcanzó a cerrar la cuenta, se devuelve su factura; si solo quedó el pago, la pantalla muestra cómo va
       const closed = check.status === "paid";
@@ -169,6 +184,9 @@ export async function payAndClose(staff: Staff, checkId: string, input: { paymen
     }
     const paid = await registerPaymentTx(tx, staff, check, p, input.payment);
     const done = await closeCheckTx(tx, staff, p.biz, checkId, input.close);
+    // El aviso del cambio va de último (closeCheckTx ya lo hace al terminar; aquí queda asegurado): el pulso de la sede
+    // nunca se toma a la mitad de la transacción
+    await bump(tx, staff.business_id);
     return { ...paid, closed: true, ...done };
   });
 }

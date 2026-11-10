@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Lo que solo se ve con Postgres real, donde hay varias conexiones a la vez (PGlite tiene una sola): dos copias que
@@ -35,6 +35,7 @@ type Staff = import("../lib/server/auth").Staff;
 type Db = import("../lib/db-core").Db;
 
 let admin: import("pg").Client;
+let copies: PromiseSettledResult<Db>[] = [];
 let db: Db;
 let biz: string;
 let pay: typeof import("../lib/server/payments");
@@ -71,34 +72,46 @@ describe.skipIf(!url)("con Postgres real", () => {
     await admin.connect();
     await admin.query("drop schema if exists public cascade");
     await admin.query("create schema public");
-  }, 60_000);
 
-  afterAll(async () => {
-    await admin?.end().catch(() => {});
-  });
-
-  it("dos copias que arrancan a la vez contra una base vacía migran y siembran una sola vez, sin chocar", async () => {
+    // Dos copias de la función arrancan a la vez contra la base vacía, cada una con su conexión
     const core = await import("../lib/db-core");
-    const { seedIfEmpty } = await import("../lib/server/db");
+    const { seedIfEmpty, getDb } = await import("../lib/server/db");
     const first = core.connect(seedIfEmpty);
-    // Otra copia de la función: su propia conexión, arrancando al mismo tiempo
     globalThis.__dzdb = undefined;
     const second = core.connect(seedIfEmpty);
-    const [a, b] = await Promise.all([first, second]);
-    expect(a).not.toBe(b);
-    expect(a.kind).toBe("pg");
-    expect((await a.one<{ n: number }>("select count(*)::int as n from businesses"))!.n).toBe(4);
-    expect((await b.one<{ v: number }>("select max(version) as v from schema_version"))!.v).toBeGreaterThanOrEqual(6);
+    copies = await Promise.allSettled([first, second]);
 
-    db = await (await import("../lib/server/db")).getDb();
+    db = await getDb();
     pay = await import("../lib/server/payments");
     checks = await import("../lib/server/checks");
     biz = (await db.one<{ id: string }>("select id from businesses order by created_at limit 1"))!.id;
     const person = async (name: string) => (await db.one<Staff>("select id, business_id, name, role, color from staff where business_id = $1 and name = $2", [biz, name]))!;
     [valentina, juanPablo] = await Promise.all([person("Valentina"), person("Juan Pablo")]);
     for (const p of await db.query<{ id: string; name: string }>("select id, name from products where business_id = $1", [biz])) products.set(p.name, p.id);
-    if (!(await pay.currentCashSession(biz))) await pay.openCash(valentina, 200_000);
   }, 180_000);
+
+  // Cada prueba arranca con la caja abierta, aunque la anterior haya fallado a mitad de camino
+  beforeEach(async () => {
+    if (!(await pay.currentCashSession(biz))) await pay.openCash(valentina, 200_000);
+  });
+
+  // Y la conexión de apoyo no se queda con una transacción abierta
+  afterEach(async () => {
+    await admin?.query("rollback").catch(() => {});
+  });
+
+  afterAll(async () => {
+    await admin?.end().catch(() => {});
+  });
+
+  it("dos copias que arrancan a la vez contra una base vacía migran y siembran una sola vez, sin chocar", async () => {
+    expect(copies.map((c) => c.status)).toEqual(["fulfilled", "fulfilled"]);
+    const [a, b] = copies.map((c) => (c as PromiseFulfilledResult<Db>).value);
+    expect(a).not.toBe(b);
+    expect(a!.kind).toBe("pg");
+    expect((await a!.one<{ n: number }>("select count(*)::int as n from businesses"))!.n).toBe(4);
+    expect((await b!.one<{ v: number }>("select max(version) as v from schema_version"))!.v).toBeGreaterThanOrEqual(6);
+  });
 
   it("la guardia de db.tx también avisa con Postgres", async () => {
     await expect(db.tx(async () => db.query("select 1"))).rejects.toThrow(/dentro de db\.tx/);
@@ -156,19 +169,62 @@ describe.skipIf(!url)("con Postgres real", () => {
   it("cerrar la caja espera al cobro que va en camino y lo cuenta en el esperado", async () => {
     const session = (await pay.currentCashSession(biz))!;
     const before = (await pay.cashSummary(biz, session.id))!;
-    const { id } = await newCheck([["Agua", 1]]);
-    // Otra conexión hace de «cobro en camino»: lee la caja con el mismo candado compartido y registra su pago, sin terminar aún
+    const { id, total } = await newCheck([["Agua", 1]]);
+    // Otra conexión retiene la fila de la sede. El cobro alcanza a leer la caja (con su candado compartido) y se queda
+    // esperando justo antes de guardar el pago: esa era la ventana por la que se colaba un cierre
     await admin.query("begin");
-    await admin.query("select cs.id from cash_sessions cs where cs.business_id = $1 and cs.closed_at is null for share of cs", [biz]);
-    await admin.query("insert into payments (business_id, check_id, method, amount, tip, received, cash_session_id) values ($1, $2, 'efectivo', 4000, 0, 4000, $3)", [biz, id, session.id]);
-    let settled = false;
-    const closing = pay.closeCash(valentina, { counted: before.expected + 4000, note: "", confirm: true }).finally(() => (settled = true));
+    await admin.query("select id from businesses where id = $1 for update", [biz]);
+    let paid = false;
+    const payment = pay.registerPayment(valentina, id, { method: "efectivo", amount: total, tip: 0 }).finally(() => (paid = true));
+    await sleep(400);
+    expect(paid).toBe(false);
+    let closedNow = false;
+    const closing = pay.closeCash(valentina, { counted: before.expected + total, note: "", confirm: true }).finally(() => (closedNow = true));
     await sleep(500);
-    expect(settled).toBe(false);
+    expect(closedNow).toBe(false);
     await admin.query("commit");
+    await payment;
     const closed = await closing;
+    // El cierre esperó al cobro: el pago quedó en esa caja y dentro de su esperado
     const row = (await db.one<{ expected: number; difference: number }>("select expected, difference from cash_sessions where id = $1", [closed.sessionId]))!;
-    expect(row).toEqual({ expected: before.expected + 4000, difference: 0 });
-    await pay.openCash(valentina, 100_000);
+    expect(row).toEqual({ expected: before.expected + total, difference: 0 });
+    expect((await db.one<{ cash_session_id: string }>("select cash_session_id from payments where check_id = $1 and status = 'ok'", [id]))!.cash_session_id).toBe(closed.sessionId);
+  }, 30_000);
+
+  it("«efectivo exacto y cerrar» no se cruza con otro cierre que va en camino", async () => {
+    const { id, total } = await newCheck([["Agua", 1]]);
+    // Otra conexión hace de «otro cierre en camino»: ya tomó el consecutivo de facturas y le falta avisar el cambio (el pulso)
+    await admin.query("begin");
+    await admin.query("select last from counters where business_id = $1 and kind = 'invoice' for update", [biz]);
+    const closing = pay.payAndClose(valentina, id, { payment: { method: "efectivo", amount: total, tip: 0 }, close: { tipAnswer: "no", invoice: { kind: "consumidor" } } }).then(
+      (r) => r,
+      (error: Error) => error,
+    );
+    await sleep(400);
+    // payAndClose ya guardó el pago y espera el consecutivo. Si además tuviera tomado el pulso de la sede, este aviso
+    // se quedaría esperándolo y Postgres tendría que tumbar a uno de los dos (deadlock)
+    const bumped = await Promise.race([admin.query("update pulse set version = version + 1 where business_id = $1", [biz]).then(() => "avisó"), sleep(3000).then(() => "bloqueado")]);
+    expect(bumped).toBe("avisó");
+    await admin.query("commit");
+    expect(await closing).toMatchObject({ closed: true, repeated: false });
+    expect(await okPayments(id)).toBe(1);
+  }, 30_000);
+
+  it("una llave que ya la tiene un pago de otra cuenta, aún sin confirmar, no deja entrar el segundo", async () => {
+    const [a, b] = [await newCheck([["Agua", 1]]), await newCheck([["Agua", 1]])];
+    const attemptKey = `intento-${randomUUID()}`;
+    const session = (await pay.currentCashSession(biz))!;
+    // Otra conexión está guardando un pago de la cuenta B con esa llave y todavía no confirma: la búsqueda del intento
+    // no lo ve, y es el índice único el que frena el segundo
+    await admin.query("begin");
+    await admin.query("insert into payments (business_id, check_id, method, amount, tip, cash_session_id, attempt_key) values ($1, $2, 'efectivo', 4000, 0, $3, $4)", [biz, b.id, session.id, attemptKey]);
+    const second = pay.registerPayment(valentina, a.id, { method: "efectivo", amount: a.total, tip: 0, attemptKey }).then(
+      () => "cobrado",
+      (error: Error) => error.message,
+    );
+    await sleep(400);
+    await admin.query("commit");
+    expect(await second).toMatch(/otra cuenta/);
+    expect(await okPayments(a.id)).toBe(0);
   }, 30_000);
 });

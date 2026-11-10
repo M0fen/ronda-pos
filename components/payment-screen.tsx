@@ -2,7 +2,7 @@
 
 import { ArrowLeft, Banknote, Check, CreditCard, Gift, Landmark, Smartphone, Trash2, UserRound, Wallet } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { unstable_rethrow, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { closeCheckAction, payAndCloseAction, paymentAction, pulseAction, redeemRewardAction, removePaymentAction, reviewClientPaymentAction } from "@/app/(pos)/actions";
 import { btn, Money, Pill } from "@/components/ui";
@@ -87,17 +87,18 @@ export function PaymentScreen({
   const [auth, setAuth] = useState<(AuthRequest & { run: (a: Auth) => Promise<Result>; done: string }) | null>(null);
   const payPanel = useRef<HTMLDivElement>(null);
   // Llave del intento de cobro. Si la respuesta se pierde y se vuelve a tocar, va la misma llave y el servidor no cobra
-  // dos veces; cuando el servidor contesta (bien o con un error) ya se sabe qué pasó y el siguiente toque es otro intento
+  // dos veces; cuando el servidor contesta con certeza (bien, o con un error que dice por qué no) el siguiente toque es otro intento
   const attempt = useRef<string | null>(null);
   // Se perdió la respuesta de un cobro o de un cierre: se avisa hasta que se sepa qué pasó
   const [lost, setLost] = useState<"pago" | "cierre" | null>(null);
-  // Si después la cuenta cambia, lo que pasó ya se ve en los pagos registrados: se quita el aviso y el siguiente toque
-  // es otro intento. (Depende solo de la cuenta: no debe correr cuando aparece el aviso.)
+  // Si después cambian los pagos de la cuenta, lo que pasó ya se ve en «Pagos registrados»: se quita el aviso y el
+  // siguiente toque es otro intento. Depende solo de los pagos (números, no objetos): no debe correr cuando aparece el
+  // aviso ni con un refresco que no trae nada nuevo, porque ahí el intento sigue sin respuesta y conserva su llave
   useEffect(() => {
     if (!lost) return;
     attempt.current = null;
     setLost(null);
-  }, [check.updated_at, check.payments.length]);
+  }, [check.payments.length, check.paid]);
 
   // La división se guarda en este dispositivo: si la página se recarga a mitad del cobro, no se pierde
   const splitKey = `ronda-split:${check.id}`;
@@ -167,9 +168,10 @@ export function PaymentScreen({
   const waiting = check.pendingPayments.length > 0;
 
   /**
-   * El servidor no contestó (se cayó la red a mitad del cobro): no se sabe si quedó. Se avisa, y si hay conexión se vuelve
-   * a pedir la cuenta. Sin conexión no se refresca: el navegador sacaría su página de error; la pantalla se pone al día
-   * sola cuando vuelva (el pulso de «En vivo»).
+   * No se supo si quedó: el servidor no contestó (se cayó la red a mitad del cobro) o contestó con un error inesperado
+   * (pudo caerse justo al confirmar). Se avisa, se conserva la llave del intento y, si hay conexión, se vuelve a pedir la
+   * cuenta. Sin conexión no se refresca: el navegador sacaría su página de error; la pantalla se pone al día sola cuando
+   * vuelva (el pulso de «En vivo»).
    */
   function lostAnswer(what: "pago" | "cierre") {
     setLost(what);
@@ -197,9 +199,12 @@ export function PaymentScreen({
           confirmTip: tipConfirm,
           attemptKey,
         });
-      } catch {
+      } catch (error) {
+        // Si la sesión se venció, Next ya está llevando a /entrar: eso no es un pago sin respuesta
+        unstable_rethrow(error);
         return lostAnswer("pago");
       }
+      if (!r.ok && r.fields?.unexpected) return lostAnswer("pago");
       attempt.current = null;
       setLost(null);
       if (!r.ok && r.fields?.tipConfirm) {
@@ -244,7 +249,8 @@ export function PaymentScreen({
       let r: Awaited<ReturnType<typeof closeCheckAction>>;
       try {
         r = await closeCheckAction(check.id, closeInput());
-      } catch {
+      } catch (error) {
+        unstable_rethrow(error);
         return lostAnswer("cierre");
       }
       setLost(null);
@@ -270,9 +276,11 @@ export function PaymentScreen({
           payment: { method: "efectivo", amount: due, tip, received: due + tip, part: "", confirmTip: tipConfirm, attemptKey },
           close: closeInput(),
         });
-      } catch {
+      } catch (error) {
+        unstable_rethrow(error);
         return lostAnswer("cierre");
       }
+      if (!r.ok && r.fields?.unexpected) return lostAnswer("cierre");
       attempt.current = null;
       setLost(null);
       if (r.ok && r.data?.closed) return finish(r);
@@ -304,8 +312,8 @@ export function PaymentScreen({
   const lostNote = lost ? (
     <p className="rounded-2xl bg-fachada-soft px-4 py-3 text-[15px] font-semibold text-[#6b4b00] ring-1 ring-fachada" role="alert">
       {lost === "pago"
-        ? "Se perdió la conexión y no se supo si el último pago quedó. Mira los pagos registrados: si falta, regístralo otra vez. No se cobra dos veces."
-        : "Se perdió la conexión y no se supo si la cuenta se cerró. Vuelve a intentarlo: no se cobra ni se factura dos veces."}
+        ? "No se supo si el último pago quedó (se cayó la conexión o falló el servidor). Mira los pagos registrados: si falta, regístralo otra vez. No se cobra dos veces."
+        : "No se supo si la cuenta se cerró (se cayó la conexión o falló el servidor). Vuelve a intentarlo: no se cobra ni se factura dos veces."}
     </p>
   ) : null;
 

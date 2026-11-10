@@ -128,6 +128,23 @@ describe("llave de intento del cobro", () => {
     expect(await state(id)).toMatchObject({ ok: 0, paid: 0 });
   });
 
+  it("con la misma llave no se cuela otro pago distinto: avisa cuál fue el que quedó", async () => {
+    const id = await newCheck([["Coca-Cola lata", 3]]);
+    const attemptKey = key();
+    await pay.registerPayment(valentina, id, { method: "efectivo", amount: 5000, tip: 0, part: "Parte 1 de 3", attemptKey });
+    // La respuesta se perdió y, sin refrescar, se toca la parte 2 (o se cambia el medio o el valor) con la llave anterior:
+    // no se responde «ya quedó» (la parte 2 no ha quedado) ni se registra a ciegas
+    await expect(pay.registerPayment(valentina, id, { method: "efectivo", amount: 5000, tip: 0, part: "Parte 2 de 3", attemptKey })).rejects.toThrow(
+      /El intento anterior sí había quedado registrado: Efectivo por \$5\.000 \(Parte 1 de 3\)/,
+    );
+    await expect(pay.registerPayment(valentina, id, { method: "tarjeta", amount: 5000, tip: 0, part: "Parte 1 de 3", reference: "123456", attemptKey })).rejects.toThrow(/sí había quedado registrado/);
+    await expect(pay.registerPayment(valentina, id, { method: "efectivo", amount: 4000, tip: 0, part: "Parte 1 de 3", attemptKey })).rejects.toThrow(/sí había quedado registrado/);
+    expect(await state(id)).toMatchObject({ ok: 1, paid: 5000 });
+    // Con otra llave (la pantalla la renueva cuando el servidor le contesta), la parte 2 entra
+    await pay.registerPayment(valentina, id, { method: "efectivo", amount: 5000, tip: 0, part: "Parte 2 de 3", attemptKey: key() });
+    expect(await state(id)).toMatchObject({ ok: 2, paid: 10_000 });
+  });
+
   it("una llave mal formada se rechaza sin cobrar", async () => {
     const id = await newCheck([["Agua", 1]]);
     await expect(pay.registerPayment(valentina, id, { method: "efectivo", amount: 4000, tip: 0, attemptKey: "x" })).rejects.toThrow(/identificar/);
@@ -303,6 +320,13 @@ describe("arqueo a ciegas", () => {
     expect(blind.byMethod.find((m) => m.method === "efectivo")).toMatchObject({ amount: null, tip: null });
     expect(JSON.stringify(blind)).not.toContain(String(summary.expected));
     expect(cashView(summary, can.seeExpected(andres)).expected).toBe(summary.expected);
+    // Mientras esa caja siga abierta, la caja tampoco ve los totales de su jornada en el panel (restando saldría el efectivo)
+    const { hidesDayTotals } = await import("../lib/core/cash");
+    const { addDays, jornadaKey } = await import("../lib/core/time");
+    const openedDay = jornadaKey(new Date(session.opened_at));
+    expect(hidesDayTotals(can.seeExpected(valentina), session.opened_at, openedDay)).toBe(true);
+    expect(hidesDayTotals(can.seeExpected(valentina), session.opened_at, addDays(openedDay, -1))).toBe(false);
+    expect(hidesDayTotals(can.seeExpected(andres), session.opened_at, openedDay)).toBe(false);
     // Cierra con un faltante: a la caja no se le devuelve la diferencia ni le llega en los cierres anteriores
     const closed = await pay.closeCash(valentina, { counted: summary.expected - 3000, note: "", confirm: true });
     expect(closed.difference).toBeNull();
@@ -310,17 +334,31 @@ describe("arqueo a ciegas", () => {
     expect(history[0]).toMatchObject({ id: closed.sessionId, expected: summary.expected, counted: summary.expected - 3000, difference: -3000 });
     expect(closedCashView(history, can.seeExpected(valentina))[0]).toEqual({ id: closed.sessionId, closed_at: history[0]!.closed_at, closer: "Valentina", expected: null, counted: null, difference: null });
     expect(closedCashView(history, can.seeExpected(andres))[0]).toMatchObject({ expected: summary.expected, difference: -3000 });
+    // Con la caja cerrada ya no hay nada que cuidar: los totales del día vuelven a verse
+    expect(hidesDayTotals(can.seeExpected(valentina), (await pay.currentCashSession(biz))?.opened_at, openedDay)).toBe(false);
     // La caja queda abierta otra vez para lo que sigue
     await pay.openCash(valentina, 200_000);
   });
 });
 
 describe("caja y cobro", () => {
-  it("dentro de la transacción del cobro la caja abierta se lee con candado (y trae quién la abrió)", async () => {
+  it("dentro de la transacción del cobro la caja abierta se pide con candado compartido", async () => {
+    // PGlite tiene una sola conexión y no puede mostrar la espera (eso lo prueba tests/postgres.integration.test.ts):
+    // aquí se revisa que el candado se pida solo dentro de una transacción y que la consulta sea válida con el left join
     const outside = (await pay.currentCashSession(biz))!;
-    const inside = await db.tx((tx) => pay.currentCashSession(biz, tx));
+    const asked: string[] = [];
+    const inside = await db.tx((tx) =>
+      pay.currentCashSession(biz, {
+        one<T>(sql: string, params?: unknown[]) {
+          asked.push(sql);
+          return tx.one<T>(sql, params);
+        },
+      }),
+    );
     expect(inside).toEqual(outside);
     expect(inside!.opener).toBeTruthy();
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatch(/closed_at is null[\s\S]*for share of cs\s*$/);
   });
 });
 

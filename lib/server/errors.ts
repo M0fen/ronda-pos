@@ -10,7 +10,11 @@ export class UserError extends Error {
 
 export type ActionResult<T = unknown> = { ok: true; data?: T; message?: string } | { ok: false; error: string; fields?: Record<string, string> };
 
-/** Envuelve una acción: los UserError se devuelven como mensaje; los demás se registran y se muestran genéricos. */
+/**
+ * Envuelve una acción: los UserError se devuelven como mensaje; los demás se registran y se muestran genéricos.
+ * Un UserError dice con certeza que no quedó nada (la transacción se deshizo). Un error inesperado no: pudo caerse la
+ * conexión justo al confirmar. Por eso va marcado con `fields.unexpected`, y el cobro lo trata como «no se supo si quedó».
+ */
 export async function safely<T>(fn: () => Promise<T>, success?: string): Promise<ActionResult<T>> {
   try {
     const data = await fn();
@@ -19,7 +23,7 @@ export async function safely<T>(fn: () => Promise<T>, success?: string): Promise
     if (error instanceof UserError) return { ok: false, error: error.message, fields: error.fields };
     if (isRedirect(error)) throw error;
     console.error(error);
-    return { ok: false, error: "Algo salió mal. Intenta de nuevo en un momento." };
+    return { ok: false, error: "Algo salió mal. Intenta de nuevo en un momento.", fields: { unexpected: "1" } };
   }
 }
 
