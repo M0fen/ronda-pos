@@ -178,7 +178,11 @@ export function PaymentScreen({
     toast(what === "pago" ? "No se supo si el pago quedó: revisa los pagos registrados" : "No se supo si la cuenta se cerró: vuelve a intentarlo", { tone: "error" });
     pulseAction().then(
       () => router.refresh(),
-      () => {},
+      // Sin red, fetch falla con TypeError: no se refresca. Si hay red pero el servidor contestó otra cosa (la sesión
+      // se venció y manda a entrar), sí: la página se encarga de llevar a donde toca
+      (error) => {
+        if (!(error instanceof TypeError)) router.refresh();
+      },
     );
   }
 
