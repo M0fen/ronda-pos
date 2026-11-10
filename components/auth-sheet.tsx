@@ -42,10 +42,14 @@ export function AuthSheet({
   const people = useMemo(() => (request ? authorizers.filter((a) => ROLES[request.level].includes(a.role) && a.id !== meId) : []), [request, authorizers, meId]);
   const [who, setWho] = useState<Authorizer | null>(null);
   const [pin, setPin] = useState("");
+  // Se reinicia al pedir otra autorización o si cambia quién puede autorizar, no con cada refresco de la pantalla:
+  // la lista llega del servidor como un arreglo nuevo cada vez que algo cambia en el local (otra tablet envía, cocina
+  // marca listo) y eso borraba el PIN a medio escribir y la persona elegida
+  const peopleIds = people.map((p) => p.id).join();
   useEffect(() => {
     setPin("");
     setWho(people.length === 1 ? people[0]! : null);
-  }, [people]);
+  }, [request, peopleIds]);
   useEffect(() => {
     if (!pending) setPin("");
   }, [pending]);

@@ -36,9 +36,15 @@ export function Sheet({
     const t = setTimeout(() => setShown(false), quiet ? 0 : 190);
     return () => clearTimeout(t);
   }, [closing]);
+  // onClose suele llegar como una función nueva en cada render. Va en una referencia para que el efecto de abajo corra
+  // solo al abrir y al cerrar: si no, cada refresco de la pantalla volvía a enfocar el primer campo a mitad de escribir
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  });
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close.current();
     window.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -47,7 +53,7 @@ export function Sheet({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = prev;
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!shown) return null;
   return (
     <div
