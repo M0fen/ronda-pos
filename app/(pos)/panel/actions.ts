@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/server/auth";
 import { safely, UserError } from "@/lib/server/errors";
+import { exportCsv } from "@/lib/server/export";
 import { stockMove } from "@/lib/server/inventory";
 import { closeShift } from "@/lib/server/labor";
 import { createEnrollCode, revokeDevice } from "@/lib/server/devices";
@@ -149,4 +150,11 @@ export async function placeTableAction(id: string, pos: { x: number; y: number }
 export async function removeTableAction(id: string) {
   const staff = await requireStaff();
   return safely(() => removeTable(staff, String(id)), "Mesa quitada");
+}
+
+// ——— Para el contador: archivos CSV por jornada y por sede ———
+
+export async function exportCsvAction(input: { kind: string; from: string; to: string; allSedes?: boolean }) {
+  const staff = await requireStaff();
+  return safely(() => exportCsv(staff, input));
 }
