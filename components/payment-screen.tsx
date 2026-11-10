@@ -4,13 +4,13 @@ import { ArrowLeft, Banknote, Check, CreditCard, Gift, Landmark, Smartphone, Tra
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { closeCheckAction, paymentAction, redeemRewardAction, removePaymentAction, reviewClientPaymentAction } from "@/app/(pos)/actions";
+import { closeCheckAction, payAndCloseAction, paymentAction, pulseAction, redeemRewardAction, removePaymentAction, reviewClientPaymentAction } from "@/app/(pos)/actions";
 import { btn, Money, Pill } from "@/components/ui";
-import { cashSuggestions, splitEqual, suggestedTip } from "@/lib/core/pricing";
+import { cashSuggestions, splitEqual, splitProportional, suggestedTip } from "@/lib/core/pricing";
 import type { CheckView } from "@/lib/server/checks";
 import { cop } from "@/lib/money";
 import { METHOD_LABEL } from "@/lib/settings";
-import { cn } from "@/lib/utils";
+import { cn, newAttemptKey } from "@/lib/utils";
 import { AuthSheet, type AuthLevel, type AuthRequest, type Authorizer } from "./auth-sheet";
 import { Keypad } from "./keypad";
 import { Sheet } from "./sheet";
@@ -86,6 +86,18 @@ export function PaymentScreen({
   const [removeReason, setRemoveReason] = useState("");
   const [auth, setAuth] = useState<(AuthRequest & { run: (a: Auth) => Promise<Result>; done: string }) | null>(null);
   const payPanel = useRef<HTMLDivElement>(null);
+  // Llave del intento de cobro. Si la respuesta se pierde y se vuelve a tocar, va la misma llave y el servidor no cobra
+  // dos veces; cuando el servidor contesta (bien o con un error) ya se sabe qué pasó y el siguiente toque es otro intento
+  const attempt = useRef<string | null>(null);
+  // Se perdió la respuesta de un cobro o de un cierre: se avisa hasta que se sepa qué pasó
+  const [lost, setLost] = useState<"pago" | "cierre" | null>(null);
+  // Si después la cuenta cambia, lo que pasó ya se ve en los pagos registrados: se quita el aviso y el siguiente toque
+  // es otro intento. (Depende solo de la cuenta: no debe correr cuando aparece el aviso.)
+  useEffect(() => {
+    if (!lost) return;
+    attempt.current = null;
+    setLost(null);
+  }, [check.updated_at, check.payments.length]);
 
   // La división se guarda en este dispositivo: si la página se recarga a mitad del cobro, no se pierde
   const splitKey = `ronda-split:${check.id}`;
@@ -103,8 +115,14 @@ export function PaymentScreen({
   }, [split, parts, owner, splitKey]);
 
   const payable = check.items.filter((i) => i.status !== "void" && !i.courtesy);
-  // El puesto que puso el mesero ya dice de quién es cada cosa: "Cada quien lo suyo" arranca así
-  const ownerOf = (i: { id: string; seat: number | null }) => owner[i.id] ?? (i.seat && i.seat <= Math.max(2, parts) ? i.seat - 1 : 0);
+  const people = Math.max(2, parts);
+  // El puesto que puso el mesero ya dice de quién es cada cosa: "Cada quien lo suyo" arranca así. Si se bajó el número
+  // de personas, lo que era de alguien que ya no está vuelve a su puesto (o a la primera) y no queda sin dueño
+  const ownerOf = (i: { id: string; seat: number | null }) => {
+    const chosen = owner[i.id];
+    if (chosen !== undefined && chosen >= 0 && chosen < people) return chosen;
+    return i.seat && i.seat <= people ? i.seat - 1 : 0;
+  };
   const pendingTotal = check.pendingPayments.reduce((s, p) => s + p.amount, 0);
   const due = Math.max(0, check.due - pendingTotal);
 
@@ -116,17 +134,14 @@ export function PaymentScreen({
       return amounts.map((a, i) => ({ label: `Parte ${i + 1} de ${parts}`, amount: a, tip: tips[i] ?? 0 }));
     }
     if (split === "consumo") {
-      const people = Math.max(2, parts);
       const raw = Array.from({ length: people }, (_, p) =>
         payable.filter((i) => ownerOf(i) === p).reduce((s, i) => s + (i.unit_price + i.modifiers.reduce((a, m) => a + m.price, 0)) * i.qty, 0),
       );
-      const gross = raw.reduce((a, b) => a + b, 0) || 1;
-      let assigned = 0;
-      return raw.map((r, i) => {
-        const amount = i === people - 1 ? total - assigned : Math.round((r / gross) * total);
-        assigned += amount;
-        return { label: `Persona ${i + 1}`, amount, tip: Math.round((tipTotal * amount) / (total || 1)) };
-      });
+      // Cada quien paga lo suyo (con descuento, su parte del total, al peso). La propina se reparte según lo de cada uno,
+      // en múltiplos de $100, y suma exactamente lo que el cliente aceptó
+      const amounts = splitProportional(total, raw, 1);
+      const tips = splitProportional(tipTotal, amounts);
+      return amounts.map((amount, i) => ({ label: `Persona ${i + 1}`, amount, tip: tips[i] ?? 0 }));
     }
     return [{ label: "", amount: total, tip: tipTotal }];
   }, [split, parts, total, tipTotal, payable, owner]);
@@ -151,31 +166,55 @@ export function PaymentScreen({
   const done = check.due === 0 && chargeable && !check.pendingPayments.length;
   const waiting = check.pendingPayments.length > 0;
 
-  function register(after?: (r: Result) => void, receivedValue?: number) {
+  /**
+   * El servidor no contestó (se cayó la red a mitad del cobro): no se sabe si quedó. Se avisa, y si hay conexión se vuelve
+   * a pedir la cuenta. Sin conexión no se refresca: el navegador sacaría su página de error; la pantalla se pone al día
+   * sola cuando vuelva (el pulso de «En vivo»).
+   */
+  function lostAnswer(what: "pago" | "cierre") {
+    setLost(what);
+    toast(what === "pago" ? "No se supo si el pago quedó: revisa los pagos registrados" : "No se supo si la cuenta se cerró: vuelve a intentarlo", { tone: "error" });
+    pulseAction().then(
+      () => router.refresh(),
+      () => {},
+    );
+  }
+
+  function register() {
     if (!tipMode && tipsOn) return toast("Primero pregunta si incluye la propina", { tone: "error" });
     if (amount <= 0) return toast("No hay nada por cobrar en esta parte", { tone: "error" });
+    const attemptKey = (attempt.current ??= newAttemptKey());
     start(async () => {
-      const r = await paymentAction(check.id, {
-        method,
-        amount,
-        tip: tipNow,
-        received: method === "efectivo" ? (receivedValue ?? (receivedNum || charge)) : null,
-        reference,
-        part: current.label,
-        confirmTip: tipConfirm,
-      });
+      let r: Awaited<ReturnType<typeof paymentAction>>;
+      try {
+        r = await paymentAction(check.id, {
+          method,
+          amount,
+          tip: tipNow,
+          received: method === "efectivo" ? receivedNum || charge : null,
+          reference,
+          part: current.label,
+          confirmTip: tipConfirm,
+          attemptKey,
+        });
+      } catch {
+        return lostAnswer("pago");
+      }
+      attempt.current = null;
+      setLost(null);
       if (!r.ok && r.fields?.tipConfirm) {
         setTipConfirm(true);
         report(r);
         return;
       }
-      if (r.ok && r.data) {
+      if (r.ok && r.data?.repeated) toast("Ese pago ya había quedado registrado: no se cobró dos veces");
+      else if (r.ok && r.data) {
         toast(r.data.change > 0 ? `Pago registrado. Vueltas: ${cop(r.data.change)}` : "Pago registrado");
         setCustomAmount(null);
         if (split !== "una" && part < shares.length - 1) setPart(part + 1);
-        router.refresh();
-        after?.(r);
       } else report(r);
+      // También tras un error: si otra tablet ya cobró o cerró, la pantalla se pone al día de una vez
+      router.refresh();
     });
   }
 
@@ -202,27 +241,47 @@ export function PaymentScreen({
   function close() {
     if (tipsOn && !tipMode) return toast("Pregunta al cliente si incluye la propina", { tone: "error" });
     start(async () => {
-      const r = await closeCheckAction(check.id, closeInput());
-      if (r.ok) finish(r);
-      else report(r);
+      let r: Awaited<ReturnType<typeof closeCheckAction>>;
+      try {
+        r = await closeCheckAction(check.id, closeInput());
+      } catch {
+        return lostAnswer("cierre");
+      }
+      setLost(null);
+      if (r.ok) return finish(r);
+      report(r);
+      // Si la cuenta ya se cerró (en otra tablet, o en un intento cuya respuesta se perdió), la pantalla salta al recibo de una vez
+      router.refresh();
     });
   }
 
-  /** Lo más rápido en el mostrador: efectivo exacto, se registra y se cierra de una vez. */
+  /**
+   * Lo más rápido en el mostrador: efectivo exacto, se registra y se cierra en un solo paso. Van en la misma transacción:
+   * quedan el pago y el cierre, o ninguno (si falla el cierre no queda un pago suelto en una cuenta abierta).
+   */
   function exactCash() {
     if (tipsOn && !tipMode) return toast("Primero pregunta si incluye la propina", { tone: "error" });
+    const tip = Math.max(0, tipTotal - tipPaid);
+    const attemptKey = (attempt.current ??= newAttemptKey());
     start(async () => {
-      const p = await paymentAction(check.id, { method: "efectivo", amount: due, tip: Math.max(0, tipTotal - tipPaid), received: due + Math.max(0, tipTotal - tipPaid), part: "", confirmTip: tipConfirm });
-      if (!report(p)) {
-        if (!p.ok && p.fields?.tipConfirm) setTipConfirm(true);
-        return;
+      let r: Awaited<ReturnType<typeof payAndCloseAction>>;
+      try {
+        r = await payAndCloseAction(check.id, {
+          payment: { method: "efectivo", amount: due, tip, received: due + tip, part: "", confirmTip: tipConfirm, attemptKey },
+          close: closeInput(),
+        });
+      } catch {
+        return lostAnswer("cierre");
       }
-      const r = await closeCheckAction(check.id, closeInput());
-      if (r.ok) finish(r);
+      attempt.current = null;
+      setLost(null);
+      if (r.ok && r.data?.closed) return finish(r);
+      if (r.ok) toast("Ese pago ya había quedado registrado: revisa la cuenta y ciérrala");
       else {
+        if (r.fields?.tipConfirm) setTipConfirm(true);
         report(r);
-        router.refresh();
       }
+      router.refresh();
     });
   }
 
@@ -241,11 +300,20 @@ export function PaymentScreen({
   }
 
   const canExact = !done && !waiting && split === "una" && customAmount === null && config.methods.includes("efectivo") && cashOpen && due > 0 && !hasDrafts;
+  // El aviso va con los demás avisos de la cuenta; en el celular, arriba del cobro (que es donde se está tocando)
+  const lostNote = lost ? (
+    <p className="rounded-2xl bg-fachada-soft px-4 py-3 text-[15px] font-semibold text-[#6b4b00] ring-1 ring-fachada" role="alert">
+      {lost === "pago"
+        ? "Se perdió la conexión y no se supo si el último pago quedó. Mira los pagos registrados: si falta, regístralo otra vez. No se cobra dos veces."
+        : "Se perdió la conexión y no se supo si la cuenta se cerró. Vuelve a intentarlo: no se cobra ni se factura dos veces."}
+    </p>
+  ) : null;
 
   return (
     <div className="mx-auto grid max-w-[1400px] gap-4 px-3 py-4 pb-28 sm:px-5 lg:grid-cols-[1fr_1.1fr] lg:pb-4">
       {/* Resumen, propina, división, cliente y factura */}
-      <section className="space-y-4">
+      {/* min-w-0: un producto de nombre largo se recorta en su renglón en vez de ensanchar toda la pantalla en el celular */}
+      <section className="min-w-0 space-y-4">
         <div className="flex items-center gap-2">
           <Link href={`/cuenta/${check.id}`} className="flex size-10 items-center justify-center rounded-xl hover:bg-tinto/6" aria-label="Volver a la cuenta">
             <ArrowLeft size={20} />
@@ -259,6 +327,7 @@ export function PaymentScreen({
         </div>
         {hasDrafts ? <p className="rounded-2xl bg-cereza-soft px-4 py-3 font-semibold text-cereza">Hay productos sin enviar. Envíalos o quítalos antes de cobrar.</p> : null}
         {!cashOpen && !done ? <p className="rounded-2xl bg-fachada-soft px-4 py-3 font-semibold text-[#6b4b00]">La caja está cerrada: ábrela en Caja para cobrar. Así cada pago queda en un cierre.</p> : null}
+        {lostNote ? <div className="max-lg:hidden">{lostNote}</div> : null}
 
         <div className="rounded-3xl bg-papel p-4 ring-1 ring-linea">
           <ul className="divide-y divide-linea">
@@ -464,7 +533,8 @@ export function PaymentScreen({
       </section>
 
       {/* Pagos */}
-      <section ref={payPanel} className="scroll-mt-4 space-y-4 lg:sticky lg:top-[72px] lg:self-start">
+      <section ref={payPanel} className="min-w-0 scroll-mt-4 space-y-4 lg:sticky lg:top-[72px] lg:self-start">
+        {lostNote ? <div className="lg:hidden">{lostNote}</div> : null}
         {check.pendingPayments.map((p) => (
           <div key={p.id} className="rounded-3xl bg-fachada-soft p-4 ring-1 ring-fachada">
             <p className="font-bold">
