@@ -18,6 +18,8 @@ export function ownerSummary(input: {
   partial?: boolean;
   top: { name: string; qty: number }[];
   methods: { method: string; amount: number }[];
+  /** Arqueo a ciegas: quien arma el resumen no ve el efectivo; el mensaje lo dice en vez de dar la cifra */
+  cashHidden?: boolean;
   voids: { n: number; amount: number };
   courtesies: number;
   discounts?: { n: number; amount: number };
@@ -26,13 +28,14 @@ export function ownerSummary(input: {
   open: { n: number; amount: number };
 }) {
   const delta = input.lastWeek ? Math.round(((input.sales - input.lastWeek) / input.lastWeek) * 100) : null;
+  const methods = [...input.methods.map((m) => `${METHOD_LABEL[m.method] ?? m.method} ${cop(m.amount)}`), ...(input.cashHidden ? ["el efectivo se cuenta en el arqueo de caja"] : [])];
   const lines = [
     `*${input.business} · ${input.dayLabel}*`,
     `Ventas netas: ${cop(input.sales)} en ${input.checks} cuentas${delta !== null ? ` (${delta >= 0 ? "+" : ""}${delta} % frente al ${input.weekday} pasado${input.partial ? " a esta hora" : ""})` : ""}`,
     input.gross ? `Con impuesto: ${cop(input.gross)}` : "",
     `Ticket promedio sin impuesto: ${cop(input.avgTicket)} · Propinas aparte: ${cop(input.tips)}`,
     input.top.length ? `Lo más vendido: ${input.top.slice(0, 3).map((t) => `${t.name} (${t.qty})`).join(", ")}` : "",
-    input.methods.length ? `Pagos: ${input.methods.map((m) => `${METHOD_LABEL[m.method] ?? m.method} ${cop(m.amount)}`).join(" · ")}` : "",
+    methods.length ? `Pagos: ${methods.join(" · ")}` : "",
     input.voids.n ? `Anulaciones: ${input.voids.n} por ${cop(input.voids.amount)}` : "Sin anulaciones",
     input.courtesies ? `Cortesías y premios: ${cop(input.courtesies)}` : "",
     input.discounts?.n ? `Descuentos: ${input.discounts.n} por ${cop(input.discounts.amount)}` : "",

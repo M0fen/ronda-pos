@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { BarList, ColumnChart } from "@/components/charts";
 import { btn, Empty, Pill } from "@/components/ui";
+import { methodsFor } from "@/lib/core/cash";
 import { addDays, bogotaParts, jornadaKey, weekdayOf } from "@/lib/core/time";
 import { fmtDay, fmtShort, fmtTime } from "@/lib/format";
 import { can, requireStaff } from "@/lib/server/auth";
@@ -45,6 +46,9 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
   const delta = lastWeek ? Math.round(((report.net - lastWeek) / lastWeek) * 100) : null;
   const dayLabel = fmtDay(`${day}T12:00:00-05:00`);
   const before = daily.find((d) => d.day === yesterday);
+  // Arqueo a ciegas: quien cuenta el cajón (caja) no ve cuánto entró en efectivo, ni en «Cómo pagaron» ni en el resumen para WhatsApp
+  const blind = !can.seeExpected(staff);
+  const methods = methodsFor(report.byMethod, !blind);
   const text = ownerSummary({
     business: biz.name,
     dayLabel,
@@ -57,7 +61,8 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
     weekday,
     partial: isToday,
     top: report.topProducts,
-    methods: report.byMethod,
+    methods,
+    cashHidden: blind,
     voids: report.voids,
     courtesies: report.courtesies,
     discounts: report.discounts,
@@ -192,7 +197,8 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
         <div className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
           <h2 className="font-bold">Cómo pagaron</h2>
           <p className="mb-3 text-sm text-humo">Con impuesto, sin propina</p>
-          {report.byMethod.length ? <BarList rows={report.byMethod.map((m) => ({ label: METHOD_LABEL[m.method] ?? m.method, value: m.amount, sub: `· ${m.n}` }))} /> : <Empty title="Sin pagos" />}
+          {methods.length ? <BarList rows={methods.map((m) => ({ label: METHOD_LABEL[m.method] ?? m.method, value: m.amount, sub: `· ${m.n}` }))} /> : blind ? null : <Empty title="Sin pagos" />}
+          {blind ? <p className="mt-3 text-sm text-humo">El efectivo no aparece aquí: se cuenta en el arqueo de caja.</p> : null}
           <h2 className="mt-6 mb-3 font-bold">Por mesero (netas)</h2>
           {report.byWaiter.length ? <BarList rows={report.byWaiter.map((w) => ({ label: w.name, value: w.sales, sub: `· ${w.checks} cuentas` }))} /> : <Empty title="Sin ventas" />}
         </div>

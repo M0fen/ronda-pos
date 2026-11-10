@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { cashMoveAction, closeCashAction, fixCashCountAction, openCashAction } from "@/app/(pos)/actions";
 import { btn, Money, Pill } from "@/components/ui";
+import type { CashView, ClosedCash } from "@/lib/core/cash";
 import { fmtShort, fmtTime } from "@/lib/format";
-import type { cashSummary } from "@/lib/server/payments";
 import { cop } from "@/lib/money";
 import { METHOD_LABEL } from "@/lib/settings";
 import { cn } from "@/lib/utils";
@@ -15,26 +15,26 @@ import { Keypad } from "./keypad";
 import { Sheet } from "./sheet";
 import { report, toast } from "./toast";
 
-type Summary = NonNullable<Awaited<ReturnType<typeof cashSummary>>>;
 type Result = { ok: boolean; error?: string; message?: string; fields?: Record<string, string> };
 type Auth = { id: string; pin: string };
 const DENOMS = [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50];
 const typeAmount = (r: string, k: string) => (k === "del" ? r.slice(0, -1) : k === "000" ? (r ? `${r}000` : "") : r + k).slice(0, 8);
 
+/**
+ * Caja. El arqueo es a ciegas: a quien no puede ver el esperado (la caja) el servidor no le manda el esperado, la base,
+ * el total cobrado ni el efectivo (llegan en null), y la pantalla pinta lo que hay. El dueño y la administración ven todo.
+ */
 export function CashScreen({
   summary,
   history,
   canClose,
-  seeExpected,
   canFix,
   authorizers,
   meId,
 }: {
-  summary: Summary | null;
-  history: { id: string; opened_at: string; closed_at: string; expected: number; counted: number; difference: number; closer: string | null }[];
+  summary: CashView | null;
+  history: ClosedCash[];
   canClose: boolean;
-  /** Dueño y administración: ven el esperado. La caja cuenta a ciegas */
-  seeExpected: boolean;
   canFix: boolean;
   authorizers: Authorizer[];
   meId: string;
@@ -92,6 +92,7 @@ export function CashScreen({
     );
 
   const s = summary;
+  const expected = s.expected;
 
   function saveMove() {
     const kind = move!;
@@ -118,7 +119,7 @@ export function CashScreen({
           <h1 className="text-2xl font-bold">Caja abierta</h1>
           <p className="text-humo">
             Desde las {fmtTime(s.session.opened_at)} · {s.session.opener}
-            {seeExpected ? ` · base ${cop(s.session.opening)}` : ""}
+            {s.session.opening !== null ? ` · base ${cop(s.session.opening)}` : ""}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -144,11 +145,11 @@ export function CashScreen({
       <div className="mt-4 grid gap-4 md:grid-cols-[1.2fr_1fr]">
         <section className="rounded-3xl bg-papel p-4 ring-1 ring-linea">
           <p className="font-bold">Cobrado en este turno</p>
-          {seeExpected ? (
+          {s.sales !== null ? (
             <>
               <p className="mt-1 text-4xl font-bold tnum">{cop(s.sales)}</p>
               <p className="text-sm text-humo">
-                {s.payments} {s.payments === 1 ? "pago" : "pagos"}, con impuesto · propinas aparte: {cop(s.tips)}
+                {s.payments} {s.payments === 1 ? "pago" : "pagos"}, con impuesto{s.tips !== null ? ` · propinas aparte: ${cop(s.tips)}` : ""}
               </p>
             </>
           ) : (
@@ -161,11 +162,11 @@ export function CashScreen({
               <li key={m.method} className="flex items-center justify-between py-2.5">
                 <span className="font-semibold">{METHOD_LABEL[m.method]}</span>
                 <span className="text-right">
-                  {/* Arqueo a ciegas: el efectivo se cuenta sin saber cuánto debería haber */}
-                  {m.method === "efectivo" && !seeExpected ? <span className="font-semibold">Se cuenta al cerrar</span> : <Money value={m.amount + m.tip} className="font-semibold" />}
+                  {/* Arqueo a ciegas: el efectivo se cuenta sin saber cuánto debería haber (su valor ni siquiera llega) */}
+                  {m.amount === null ? <span className="font-semibold">Se cuenta al cerrar</span> : <Money value={m.amount + (m.tip ?? 0)} className="font-semibold" />}
                   <span className="block text-[13px] text-humo">
                     {m.n} {m.n === 1 ? "pago" : "pagos"}
-                    {m.tip && (seeExpected || m.method !== "efectivo") ? ` · incluye ${cop(m.tip)} de propina` : ""}
+                    {m.tip ? ` · incluye ${cop(m.tip)} de propina` : ""}
                     {m.method === "plataforma" ? " · no entra al cajón" : ""}
                   </span>
                 </span>
@@ -174,16 +175,16 @@ export function CashScreen({
           </ul>
           {s.removed.n ? (
             <p className="mt-3 rounded-xl bg-cereza-soft px-3 py-2 text-sm font-semibold text-cereza">
-              {s.removed.n} {s.removed.n === 1 ? "pago quitado" : "pagos quitados"} en este turno{seeExpected ? ` por ${cop(s.removed.amount)}` : ""}. El detalle está en el panel.
+              {s.removed.n} {s.removed.n === 1 ? "pago quitado" : "pagos quitados"} en este turno{s.removed.amount !== null ? ` por ${cop(s.removed.amount)}` : ""}. El detalle está en el panel.
             </p>
           ) : null}
         </section>
         <section className="space-y-4">
           <div className="rounded-3xl bg-tinto p-4 text-cal">
             <p className="font-semibold text-cal/75">Efectivo que debe haber en el cajón</p>
-            {seeExpected ? (
+            {expected !== null ? (
               <>
-                <p className="mt-1 text-4xl font-bold tnum">{cop(s.expected)}</p>
+                <p className="mt-1 text-4xl font-bold tnum">{cop(expected)}</p>
                 <p className="text-sm text-cal/70">Base, más lo cobrado en efectivo con sus propinas, más entradas y menos salidas.</p>
               </>
             ) : (
@@ -246,7 +247,7 @@ export function CashScreen({
           </button>
         }
       >
-        <p className="text-sm text-humo">Cuenta los billetes y monedas del cajón.{seeExpected ? "" : " El sistema compara después: tú no ves el esperado."}</p>
+        <p className="text-sm text-humo">Cuenta los billetes y monedas del cajón.{expected !== null ? "" : " El sistema compara después: tú no ves el esperado."}</p>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
           {DENOMS.map((d) => (
             <label key={d} className="flex items-center gap-2 rounded-xl bg-cal px-3 py-2">
@@ -303,16 +304,16 @@ export function CashScreen({
             <dt>Contado</dt>
             <dd className="font-bold tnum">{cop(counted)}</dd>
           </div>
-          {seeExpected ? (
+          {expected !== null ? (
             <>
               <div className="flex justify-between">
                 <dt>Esperado</dt>
-                <dd className="tnum">{cop(s.expected)}</dd>
+                <dd className="tnum">{cop(expected)}</dd>
               </div>
               <div className="flex justify-between">
                 <dt>Diferencia</dt>
-                <dd className={cn("font-bold tnum", counted - s.expected < 0 ? "text-cereza" : counted - s.expected > 0 ? "text-[#6b4b00]" : "text-puerta")}>
-                  {counted - s.expected === 0 ? "Cuadra" : counted - s.expected > 0 ? `Sobran ${cop(counted - s.expected)}` : `Faltan ${cop(s.expected - counted)}`}
+                <dd className={cn("font-bold tnum", counted - expected < 0 ? "text-cereza" : counted - expected > 0 ? "text-[#6b4b00]" : "text-puerta")}>
+                  {counted - expected === 0 ? "Cuadra" : counted - expected > 0 ? `Sobran ${cop(counted - expected)}` : `Faltan ${cop(expected - counted)}`}
                 </dd>
               </div>
             </>
@@ -347,7 +348,7 @@ export function CashScreen({
   );
 }
 
-function History({ history, canFix }: { history: { id: string; closed_at: string; expected: number; counted: number; difference: number; closer: string | null }[]; canFix: boolean }) {
+function History({ history, canFix }: { history: ClosedCash[]; canFix: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [fixing, setFixing] = useState<string | null>(null);
@@ -366,12 +367,13 @@ function History({ history, canFix }: { history: { id: string; closed_at: string
               </span>
               <span className="block text-[13px] text-humo">
                 {h.closer}
-                {canFix ? ` · esperado ${cop(h.expected)} · contado ${cop(h.counted)}` : ""}
+                {h.expected !== null && h.counted !== null ? ` · esperado ${cop(h.expected)} · contado ${cop(h.counted)}` : ""}
               </span>
             </span>
             <span className="flex items-center gap-2">
-              {canFix ? h.difference === 0 ? <Pill tone="green">Cuadró</Pill> : <Pill tone={h.difference > 0 ? "yellow" : "red"}>{h.difference > 0 ? `+${cop(h.difference)}` : cop(h.difference)}</Pill> : null}
-              {canFix ? (
+              {/* A quien cuenta a ciegas no le llega si cuadró: solo cuándo y quién cerró */}
+              {h.difference === null ? null : h.difference === 0 ? <Pill tone="green">Cuadró</Pill> : <Pill tone={h.difference > 0 ? "yellow" : "red"}>{h.difference > 0 ? `+${cop(h.difference)}` : cop(h.difference)}</Pill>}
+              {canFix && h.counted !== null ? (
                 <button className={btn("light", "sm")} onClick={() => (setFixing(h.id), setValue(String(h.counted)), setWhy(""))}>
                   Corregir conteo
                 </button>
