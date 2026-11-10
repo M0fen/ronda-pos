@@ -1,9 +1,9 @@
 "use client";
 
-import { BellRing, Check, ChevronRight, Clock, Receipt, ShoppingBag, Users, Utensils, Wine, X } from "lucide-react";
+import { BellRing, Check, ChevronRight, Clock, Pause, Receipt, ShoppingBag, Split, Users, Utensils, Wine, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { approveRequestAction, openCheckAction, rejectRequestAction } from "@/app/(pos)/actions";
 import { btn, Money, Pill } from "@/components/ui";
 import type { CheckSummary, RequestView, TableView } from "@/lib/server/checks";
@@ -81,7 +81,12 @@ export function Salon({ floor }: { floor: Floor }) {
 
       <div className="flex flex-col">
         {/* Plano en tablet y computador; lista en el teléfono */}
-        <div className={cn("relative mt-4 hidden rounded-3xl border border-linea bg-papel/60 sm:block", counter ? "order-2 aspect-[16/4]" : "aspect-[16/7.2]")}>
+        <div
+          className={cn(
+            "relative mt-4 hidden rounded-3xl border border-linea bg-papel/60 bg-[radial-gradient(circle,var(--color-linea)_1.2px,transparent_1.2px)] bg-[size:24px_24px] sm:block",
+            counter ? "order-2 aspect-[16/4]" : "aspect-[16/7.2]",
+          )}
+        >
           {tables.map((t) => (
             <div
               key={t.id}
@@ -93,7 +98,7 @@ export function Salon({ floor }: { floor: Floor }) {
                 height: "34%",
               }}
             >
-              <TableTile table={t} onOpen={() => (setOpening(t), setGuests(Math.min(t.seats, 2)))} />
+              <TableTile plan table={t} onOpen={() => (setOpening(t), setGuests(Math.min(t.seats, 2)))} />
             </div>
           ))}
         </div>
@@ -127,7 +132,13 @@ export function Salon({ floor }: { floor: Floor }) {
                       </span>
                     </span>
                     {/* "Listo" solo cuando todo está listo; mientras tanto, cuántos van */}
-                    {c.ready && !c.inStation ? <Pill tone="green">Listo</Pill> : c.ready ? <Pill tone="yellow">{`${c.ready} de ${c.ready + c.inStation} listos`}</Pill> : null}
+                    {c.ready && !c.inStation ? (
+                      <Pill tone="green">Listo</Pill>
+                    ) : c.ready ? (
+                      <Pill tone="yellow">{`${c.ready} de ${c.ready + c.inStation} listos`}</Pill>
+                    ) : c.held && !c.inStation ? (
+                      <Pill tone="blue">{`${c.held} retenido${c.held > 1 ? "s" : ""}`}</Pill>
+                    ) : null}
                     <Money value={c.total} className="font-semibold" />
                     <ChevronRight size={18} className="text-humo" />
                   </Link>
@@ -188,66 +199,137 @@ export function Salon({ floor }: { floor: Floor }) {
   );
 }
 
-function TableTile({ table, onOpen }: { table: TableView; onOpen: () => void }) {
-  const c = table.check;
+/**
+ * Una mesa en el plano o en la lista del teléfono. Libre: contorno punteado. Ocupada: tarjeta tipo comanda con una
+ * franja que dice el estado de lejos (color del local; amarilla si pidió la cuenta; verde si hay algo listo para llevar).
+ * El texto crece con la mesa (unidades del contenedor) para que no sobre espacio en pantallas grandes ni falte en tablets.
+ */
+/** Cuando una mesa cambia (otro mesero, la barra, el QR), la tarjeta destella una vez para que se note. */
+function useFlashOnChange(sig: string) {
+  const ref = useRef<HTMLElement | null>(null);
+  const prev = useRef<string | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (prev.current !== null && prev.current !== sig && el && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const color = getComputedStyle(el).getPropertyValue("--color-fachada").trim() || "#FFC20E";
+      el.animate(
+        [
+          { outline: `4px solid ${color}`, outlineOffset: "0px" },
+          { outline: "4px solid transparent", outlineOffset: "14px" },
+        ],
+        { duration: 1100, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+      );
+    }
+    prev.current = sig;
+  }, [sig]);
+  return ref;
+}
+
+function TableTile({ table, onOpen, plan = false }: { table: TableView; onOpen: () => void; plan?: boolean }) {
+  const main = table.check;
+  // Con cuentas aparte, la mesa muestra todo junto: el total, lo listo, lo que se prepara y lo retenido
+  const all = main ? [main, ...table.splits] : [];
+  const c = main
+    ? {
+        ...main,
+        total: all.reduce((s, x) => s + x.total, 0),
+        ready: all.reduce((s, x) => s + x.ready, 0),
+        inStation: all.reduce((s, x) => s + x.inStation, 0),
+        held: all.reduce((s, x) => s + x.held, 0),
+        status: all.some((x) => x.status === "bill") ? ("bill" as const) : main.status,
+        minutesIdle: Math.min(...all.map((x) => x.minutesIdle)),
+      }
+    : null;
+  const flash = useFlashOnChange(c ? `${c.id}:${c.status}:${c.ready}:${c.inStation}:${c.held}:${c.total}:${all.length}` : "libre");
+  const round = plan && table.shape === "round";
+  const shape = round ? "aspect-square h-full max-w-full mx-auto rounded-full" : "h-full w-full rounded-[22px]";
   if (!c)
     return (
       <button
+        ref={flash as React.Ref<HTMLButtonElement>}
         onClick={onOpen}
         className={cn(
-          "flex h-full w-full flex-col items-center justify-center border-2 border-dashed border-linea-2 bg-papel text-tinto-2 transition hover:border-tinto hover:text-tinto",
-          table.shape === "round" ? "rounded-[999px]" : "rounded-3xl",
+          "@container flex flex-col items-center justify-center gap-1 border-2 border-dashed border-linea-2 bg-papel/60 text-tinto-2 transition hover:border-balcon hover:bg-papel hover:text-tinto",
+          shape,
         )}
         aria-label={`Mesa ${table.name} libre, ${table.seats} puestos`}
       >
-        <span className="text-2xl font-bold [font-stretch:110%]">{table.name}</span>
-        <span className="mt-0.5 inline-flex items-center gap-1 text-[13px] text-humo">
-          <Users size={13} /> {table.seats}
+        <span className="text-[clamp(1.2rem,15cqw,2.25rem)] font-bold leading-none [font-stretch:110%]">{table.name}</span>
+        <span className="inline-flex items-center gap-1 text-[clamp(0.72rem,6.5cqw,0.9rem)] text-humo">
+          <Users className="size-[1.05em]" /> {table.seats}
         </span>
       </button>
     );
   const bill = c.status === "bill";
-  const idle = !bill && c.minutesIdle >= IDLE_MINUTES && c.inStation === 0;
+  const waiting = !bill && c.held > 0 && c.inStation === 0;
+  const idle = !bill && !waiting && c.minutesIdle >= IDLE_MINUTES && c.inStation === 0;
+  const band = c.ready ? "bg-puerta text-white" : bill ? "bg-fachada text-tinto" : "bg-balcon text-white";
+  const chip = c.ready
+    ? { cls: "bg-puerta-soft text-puerta-2", icon: <Check className="size-[1.1em]" strokeWidth={3} />, long: `${c.ready} listo${c.ready > 1 ? "s" : ""} para llevar`, short: `${c.ready} listo${c.ready > 1 ? "s" : ""}`, count: String(c.ready) }
+    : bill
+      ? { cls: "bg-fachada-soft text-tinto", icon: <Receipt className="size-[1.1em]" />, long: "Pidió la cuenta", short: "Cuenta", count: "" }
+      : waiting
+        ? { cls: "bg-balcon-soft text-balcon-2", icon: <Pause className="size-[1.1em]" />, long: `${c.held} retenido${c.held > 1 ? "s" : ""} por enviar`, short: `${c.held} retenido${c.held > 1 ? "s" : ""}`, count: String(c.held) }
+        : idle
+        ? { cls: "bg-fachada-soft text-tinto", icon: <Clock className="size-[1.1em]" />, long: "Ofrece otra ronda", short: "Otra ronda", count: "" }
+        : c.inStation
+          ? { cls: "bg-tinto/6 text-tinto-2", icon: <Utensils className="size-[1.1em]" />, long: `${c.inStation} en preparación`, short: `${c.inStation} en prep.`, count: String(c.inStation) }
+          : null;
   return (
     <Link
+      ref={flash as React.Ref<HTMLAnchorElement>}
       href={`/cuenta/${c.id}`}
       className={cn(
-        "relative flex h-full w-full flex-col justify-between p-3 text-left transition",
-        table.shape === "round" ? "rounded-[40px] items-center text-center" : "rounded-3xl",
-        bill ? "bg-fachada text-tinto" : "bg-balcon text-white hover:bg-balcon-2",
-        c.ready > 0 && "ready-pulse ring-4 ring-puerta",
+        "@container relative flex flex-col overflow-hidden bg-papel text-tinto shadow-[0_12px_28px_-16px_rgba(23,19,16,0.5)] ring-1 ring-black/8 transition hover:-translate-y-0.5",
+        shape,
+        round && "text-center",
+        c.ready > 0 && "ready-pulse ring-2 ring-puerta",
       )}
-      aria-label={`Mesa ${table.name}, ${bill ? "pidió la cuenta" : "ocupada"}, ${cop(c.total)}`}
+      aria-label={`Mesa ${table.name}, ${bill ? "pidió la cuenta" : "ocupada"}${all.length > 1 ? `, ${all.length} cuentas` : ""}, ${cop(c.total)}`}
     >
-      <span className={cn("flex w-full items-start gap-1", table.shape === "round" ? "justify-center gap-2.5" : "justify-between")}>
-        <span className="text-2xl font-bold leading-none [font-stretch:110%]">{table.name}</span>
-        <span className={cn("inline-flex items-center gap-1 text-[13px]", bill ? "text-tinto/70" : "text-white/80")}>
-          <Users size={13} /> {c.guests}
+      <span className={cn("flex shrink-0 items-center gap-1.5 px-[8cqw]", band, round ? "h-[42%] items-end justify-center pb-[5cqw]" : "h-[40%] justify-between")}>
+        <span className="text-[clamp(1.2rem,15cqw,2.25rem)] font-bold leading-none [font-stretch:110%]">{table.name}</span>
+        <span className="inline-flex items-center gap-1 text-[clamp(0.72rem,6.5cqw,0.9rem)] font-medium opacity-80">
+          <Users className="size-[1.05em]" /> {all.reduce((n, x) => n + x.guests, 0)}
+          {all.length > 1 ? (
+            <span className="ml-0.5 inline-flex items-center gap-0.5" title={`${all.length} cuentas`}>
+              <Split className="size-[1.05em]" /> {all.length}
+            </span>
+          ) : null}
         </span>
       </span>
-      <span className="w-full">
-        {c.ready ? (
-          <span className="mb-1 inline-flex items-center gap-1 rounded-full bg-puerta px-2 py-0.5 text-[12px] font-bold text-white">
-            <Check size={12} /> {c.ready} listo{c.ready > 1 ? "s" : ""}
+      {round ? (
+        // En la mesa redonda cabe menos: el total y una línea con el estado en corto y los minutos
+        <span className="flex min-h-0 flex-1 flex-col items-center gap-[3cqw] px-[10cqw] pt-[5cqw]">
+          <Money value={c.total} className="text-[clamp(0.9rem,10cqw,1.45rem)] font-bold leading-none" />
+          <span className="inline-flex items-center gap-1 whitespace-nowrap text-[clamp(0.68rem,6cqw,0.85rem)] leading-none text-humo tnum">
+            {chip ? (
+              <span className={cn("inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-semibold", chip.cls)} title={chip.long}>
+                {chip.icon}
+                <span className="hidden @min-[11rem]:inline">{chip.short}</span>
+                <span className="@min-[11rem]:hidden">{chip.count}</span>
+              </span>
+            ) : null}
+            {c.minutesOpen} min
           </span>
-        ) : bill ? (
-          <span className="mb-1 inline-flex items-center gap-1 text-[13px] font-bold">
-            <Receipt size={13} /> Pidió la cuenta
-          </span>
-        ) : idle ? (
-          <span className="mb-1 inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 text-[12px] font-semibold">
-            <Clock size={12} /> Ofrece otra ronda
-          </span>
-        ) : c.inStation ? (
-          <span className="mb-1 inline-flex items-center gap-1 text-[12px] font-semibold text-white/85">
-            <Utensils size={12} /> {c.inStation} en preparación
-          </span>
-        ) : null}
-        <span className="flex items-end justify-between gap-1">
-          <Money value={c.total} className="text-base font-bold" />
-          <span className={cn("text-[12px] tnum", bill ? "text-tinto/70" : "text-white/75")}>{c.minutesOpen} min</span>
         </span>
-      </span>
+      ) : (
+        <span className="flex min-h-0 flex-1 flex-col justify-between px-[7cqw] py-[5cqw]">
+          {chip ? (
+            <span className={cn("inline-flex max-w-full items-center gap-1 self-start rounded-full px-[0.6em] py-[0.2em] text-[clamp(0.68rem,5.8cqw,0.85rem)] font-semibold", chip.cls)}>
+              {chip.icon}
+              <span className="hidden truncate @min-[10rem]:inline">{chip.long}</span>
+              <span className="truncate @min-[10rem]:hidden">{chip.short}</span>
+            </span>
+          ) : (
+            <span />
+          )}
+          <span className="flex flex-wrap items-end justify-between gap-x-2 gap-y-0.5">
+            <Money value={c.total} className="text-[clamp(0.9rem,10cqw,1.45rem)] font-bold leading-none" />
+            <span className="whitespace-nowrap text-[clamp(0.7rem,6cqw,0.85rem)] leading-none text-humo tnum">{c.minutesOpen} min</span>
+          </span>
+        </span>
+      )}
     </Link>
   );
 }

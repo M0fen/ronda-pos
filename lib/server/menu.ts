@@ -131,13 +131,14 @@ export function priceItem(menu: Menu, item: ChosenItem) {
   const product = menu.products.find((p) => p.id === item.productId);
   if (!product) throw new UserError("Ese producto ya no está en la carta", { missing: String(item.productId) });
   const chosen = new Set(item.modifierIds ?? []);
-  const modifiers: { name: string; price: number }[] = [];
+  // Cada opción guarda su id y su grupo: con ellos se edita y se repite el pedido, y barra y cocina resaltan las adiciones
+  const modifiers: { name: string; price: number; id: string; group: string }[] = [];
   for (const gid of product.groups) {
     const group = menu.groups[gid];
     if (!group) continue;
     const picked = group.options.filter((o) => chosen.has(o.id));
     const final = picked.length === 0 && group.min > 0 ? group.options.filter((o) => o.isDefault).slice(0, group.min) : picked.slice(0, group.max);
-    for (const o of final) modifiers.push({ name: o.name, price: o.price });
+    for (const o of final) modifiers.push({ name: o.name, price: o.price, id: o.id, group: group.name });
   }
   return {
     product,

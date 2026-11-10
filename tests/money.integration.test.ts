@@ -140,7 +140,7 @@ describe("flujos de plata", () => {
     const id = await newCheck([["Agua", 1]], valentina);
     const item = (await db.one<{ id: string }>("select id from check_items where check_id = $1", [id]))!;
     // La cortesía la marca el dueño (o la autoriza)
-    await checks.toggleCourtesy(andres, item.id);
+    await checks.toggleCourtesy(andres, item.id, { reason: "Cortesía de la casa" });
     expect((await due(id)).total).toBe(0);
     const { invoiceId } = await pay.closeCheck(valentina, id, { tipAnswer: "no", invoice: { kind: "consumidor" } });
     expect(invoiceId).toBeNull();

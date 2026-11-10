@@ -17,7 +17,10 @@ const ITEMS = [
 export function RoundTicket({ business }: { business: string }) {
   const [lines, setLines] = useState<Record<string, number>>({ smash: 2 });
   const [paid, setPaid] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [sent, setSent] = useState<string | null>(null);
+  // Solo la línea que cambió se ilumina; la tirilla completa se imprime al cargar y al empezar de nuevo
+  const [changed, setChanged] = useState<string | null>(null);
+  const [printKey, setPrintKey] = useState(0);
   const list = ITEMS.filter((i) => lines[i.id]);
   const totals = useMemo(() => checkTotals(list.map((i) => ({ unitPrice: i.price, qty: lines[i.id]!, taxRate: 8 }))), [list, lines]);
 
@@ -29,10 +32,11 @@ export function RoundTicket({ business }: { business: string }) {
             key={i.id}
             onClick={() => {
               setLines((l) => ({ ...l, [i.id]: (l[i.id] ?? 0) + 1 }));
+              setChanged(i.id);
               setPaid(false);
-              setSent(false);
+              setSent(null);
             }}
-            className="flex min-h-16 flex-col items-start justify-center rounded-2xl bg-papel py-2.5 pr-3 pl-5 text-left ring-1 ring-linea transition active:scale-[0.98] hover:ring-tinto"
+            className="flex min-h-16 flex-col items-start justify-center rounded-2xl bg-papel py-2.5 pr-3 pl-5 text-left ring-1 ring-linea transition-[box-shadow,transform] duration-150 hover:ring-tinto motion-safe:active:scale-[0.96]"
             style={{ boxShadow: `inset 5px 0 0 ${i.color}` }}
           >
             <span className="font-semibold leading-tight">{i.name}</span>
@@ -42,7 +46,11 @@ export function RoundTicket({ business }: { business: string }) {
       </div>
 
       <div className="relative mt-4 rotate-[-1.2deg]">
-        <article key={list.map((i) => `${i.id}${lines[i.id]}`).join()} className="ticket-edge print-in relative mx-auto w-full max-w-[360px] bg-white px-6 pt-6 font-mono text-[13px] text-black shadow-[0_18px_40px_-12px_rgba(36,21,15,0.35)]">
+        <article
+          key={printKey}
+          className="ticket-edge print-in relative mx-auto w-full max-w-[360px] bg-white px-6 pt-6 font-mono text-[13px] text-black shadow-[0_18px_40px_-12px_rgba(36,21,15,0.35)]"
+          style={{ animationDelay: printKey ? "0ms" : "520ms" }}
+        >
           <p className="text-center font-sans text-lg font-extrabold [font-stretch:110%]">{business}</p>
           <p className="text-center">Mesa 7 · Ronda 1</p>
           <div className="my-3 border-t border-dashed border-black/40" />
@@ -50,7 +58,7 @@ export function RoundTicket({ business }: { business: string }) {
             <table className="w-full">
               <tbody>
                 {list.map((i) => (
-                  <tr key={i.id}>
+                  <tr key={`${i.id}:${lines[i.id]}`} className={i.id === changed ? "row-in" : undefined}>
                     <td className="w-8 tnum">{lines[i.id]}</td>
                     <td>{i.name}</td>
                     <td className="text-right tnum">{cop(i.price * lines[i.id]!)}</td>
@@ -70,12 +78,15 @@ export function RoundTicket({ business }: { business: string }) {
             <span>Impoconsumo 8%</span>
             <span className="tnum">{cop(totals.tax)}</span>
           </div>
-          <div className="flex justify-between text-[16px] font-bold">
+          <div key={changed ? totals.total : "total"} className={cn("flex justify-between text-[16px] font-bold", changed && "row-in")}>
             <span>TOTAL</span>
             <span className="tnum">{cop(totals.total)}</span>
           </div>
+          {sent ? <p className="row-in mt-3 border-t border-dashed border-black/40 pt-2 text-center">Comanda en la barra · {sent}</p> : null}
           {paid ? (
-            <p className="absolute top-16 right-4 rotate-[-12deg] rounded-md border-[3px] border-puerta px-2 py-1 font-sans text-xl font-black tracking-wide text-puerta">PAGADO · BRE-B</p>
+            <p className="stamp-in absolute top-16 right-4 rotate-[-12deg] rounded-md border-[3px] border-puerta bg-white/70 px-2 py-1 font-sans text-xl font-black tracking-wide text-puerta">
+              PAGADO · BRE-B
+            </p>
           ) : null}
         </article>
       </div>
@@ -83,7 +94,7 @@ export function RoundTicket({ business }: { business: string }) {
       <div className="mt-5 flex gap-2">
         <button
           className={cn("inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-xl font-semibold", sent ? "bg-puerta-soft text-puerta-2" : "bg-puerta text-white")}
-          onClick={() => setSent(true)}
+          onClick={() => setSent(new Intl.DateTimeFormat("es-CO", { hour: "numeric", minute: "2-digit", timeZone: "America/Bogota" }).format(new Date()))}
           disabled={!list.length}
         >
           {sent ? (
@@ -102,7 +113,9 @@ export function RoundTicket({ business }: { business: string }) {
           onClick={() => {
             setLines({});
             setPaid(false);
-            setSent(false);
+            setSent(null);
+            setChanged(null);
+            setPrintKey((k) => k + 1);
           }}
           aria-label="Empezar de nuevo"
         >
