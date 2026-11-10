@@ -500,4 +500,19 @@ create index checks_split on checks (split_of) where split_of is not null;
       await tx.query("create unique index checks_one_open_table on checks (table_id) where status in ('open','bill') and table_id is not null and split_of is null");
     },
   },
+  {
+    // Cobro: cada intento lleva su llave para que un reintento (se cayó la red, la cola sin conexión reenvía) no duplique
+    // el pago. Y las opciones de la carta no pueden tener precio negativo, igual que los productos
+    version: 6,
+    sql: `
+alter table payments add column attempt_key text;
+create unique index payments_attempt_key on payments (business_id, attempt_key) where attempt_key is not null;
+`,
+    // El cobro ya contaba en $0 una opción con precio negativo: queda así en la carta antes de prohibirlas
+    async run(tx) {
+      const fixed = await tx.query("update modifiers set price = 0 where price < 0 returning id");
+      if (fixed.length) console.warn(`[db] ${fixed.length} opciones de la carta tenían precio negativo y quedaron en $0 (el cobro ya las contaba así).`);
+      await tx.query("alter table modifiers add constraint modifiers_price_check check (price >= 0)");
+    },
+  },
 ];

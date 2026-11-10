@@ -138,7 +138,11 @@ export function priceItem(menu: Menu, item: ChosenItem) {
     if (!group) continue;
     const picked = group.options.filter((o) => chosen.has(o.id));
     const final = picked.length === 0 && group.min > 0 ? group.options.filter((o) => o.isDefault).slice(0, group.min) : picked.slice(0, group.max);
-    for (const o of final) modifiers.push({ name: o.name, price: o.price, id: o.id, group: group.name });
+    for (const o of final) {
+      // Una opción suma o no cobra, nunca resta: la base no la guarda con precio negativo y aquí tampoco entra a una cuenta
+      if (!Number.isFinite(o.price) || o.price < 0) throw new UserError(`La opción «${o.name}» tiene un precio que no es válido en la carta: no se puede agregar.`);
+      modifiers.push({ name: o.name, price: o.price, id: o.id, group: group.name });
+    }
   }
   return {
     product,
