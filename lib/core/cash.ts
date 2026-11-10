@@ -6,7 +6,19 @@
  * Cada vista se arma campo por campo a propósito: un dato nuevo en el resumen de caja no viaja hasta que se agregue aquí.
  */
 
+import { jornadaKey } from "./time";
+
 const CASH = "efectivo";
+
+/**
+ * ¿Hay que esconderle a esta persona los totales de una jornada? Sí, mientras la caja siga abierta y desde la jornada en
+ * que se abrió: con lo vendido en el día y lo cobrado por los otros medios sale, restando, el efectivo que debería haber
+ * (y con las propinas, igual). Cuando la caja se cierra el conteo ya quedó hecho, y los totales vuelven a verse.
+ */
+export function hidesDayTotals(seeExpected: boolean, cashOpenedAt: string | Date | null | undefined, dayKey: string) {
+  if (seeExpected || !cashOpenedAt) return false;
+  return dayKey >= jornadaKey(new Date(cashOpenedAt));
+}
 
 /** Lo que calcula el servidor de la caja abierta (cashSummary en lib/server/payments.ts). */
 export interface CashTotals {

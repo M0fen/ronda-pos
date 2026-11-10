@@ -3,13 +3,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { BarList, ColumnChart } from "@/components/charts";
 import { btn, Empty, Pill } from "@/components/ui";
-import { methodsFor } from "@/lib/core/cash";
+import { hidesDayTotals, methodsFor } from "@/lib/core/cash";
 import { addDays, bogotaParts, jornadaKey, weekdayOf } from "@/lib/core/time";
 import { fmtDay, fmtShort, fmtTime } from "@/lib/format";
 import { can, requireStaff } from "@/lib/server/auth";
 import { getBusiness } from "@/lib/server/business";
 import { formatStock, ingredientsView, needsBuying } from "@/lib/server/inventory";
 import { laborToday } from "@/lib/server/labor";
+import { currentCashSession } from "@/lib/server/payments";
 import { setupProgress } from "@/lib/server/setup";
 import { dailySales, dayReport, salesOn } from "@/lib/server/reports";
 import { cop } from "@/lib/money";
@@ -30,6 +31,13 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
   const day = dia && /^\d{4}-\d{2}-\d{2}$/.test(dia) && dia <= today && dia >= addDays(today, -90) ? dia : today;
   const isToday = day === today;
   const weekday = WEEKDAY[weekdayOf(day)] ?? "";
+  // Arqueo a ciegas: quien cuenta el cajón (caja) no ve cuánto entró en efectivo. Y mientras la caja siga abierta no ve
+  // los totales de esa jornada: con lo vendido y lo cobrado por los otros medios saldría, restando, el efectivo que
+  // debería haber. Esas cifras ni se consultan. Al cerrar la caja (el conteo ya quedó hecho) vuelven a verse
+  const blind = !can.seeExpected(staff);
+  const openCash = blind ? await currentCashSession(staff.business_id) : null;
+  const hidden = (d: string) => hidesDayTotals(!blind, openCash?.opened_at, d);
+  if (hidden(day)) return <TotalsAfterCount dayLabel={fmtDay(`${day}T12:00:00-05:00`)} day={day} yesterday={yesterday} />;
   const showLabor = isToday && can.manage(staff);
   const settings = (await getBusiness(staff.business_id)).settings;
   const [report, daily, lastWeek, ingredients, biz, labor, steps] = await Promise.all([
@@ -46,8 +54,7 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
   const delta = lastWeek ? Math.round(((report.net - lastWeek) / lastWeek) * 100) : null;
   const dayLabel = fmtDay(`${day}T12:00:00-05:00`);
   const before = daily.find((d) => d.day === yesterday);
-  // Arqueo a ciegas: quien cuenta el cajón (caja) no ve cuánto entró en efectivo, ni en «Cómo pagaron» ni en el resumen para WhatsApp
-  const blind = !can.seeExpected(staff);
+  // Sin la fila del efectivo en «Cómo pagaron» ni en el resumen para WhatsApp para quien cuenta a ciegas
   const methods = methodsFor(report.byMethod, !blind);
   const text = ownerSummary({
     business: biz.name,
@@ -182,7 +189,14 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
           <p className="mb-4 text-sm text-humo">Ventas netas. Toca un día para ver su detalle</p>
           <ColumnChart
             label="Ventas de los últimos 14 días"
-            data={daily.map((d) => ({ key: d.day, label: d.day.slice(8), value: d.sales, sub: `${fmtShort(`${d.day}T12:00:00-05:00`)} · ${d.checks} cuentas`, href: d.day === today ? "/panel" : `/panel?dia=${d.day}` }))}
+            data={daily.map((d) => ({
+              key: d.day,
+              label: d.day.slice(8),
+              // La jornada de la caja que sigue abierta va sin cifra para quien la cuenta
+              value: hidden(d.day) ? 0 : d.sales,
+              sub: hidden(d.day) ? `${fmtShort(`${d.day}T12:00:00-05:00`)} · se ve al cerrar la caja` : `${fmtShort(`${d.day}T12:00:00-05:00`)} · ${d.checks} cuentas`,
+              href: d.day === today ? "/panel" : `/panel?dia=${d.day}`,
+            }))}
             highlight={day}
           />
         </div>
@@ -275,6 +289,43 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
         <h2 className="font-bold">El resumen para WhatsApp</h2>
         <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-2xl bg-[#e7f6e9] p-4 font-sans text-[15px] leading-relaxed text-tinto">{text}</pre>
         <p className="mt-2 text-sm text-humo">El botón abre WhatsApp con el resumen listo para enviar. Que llegue solo cada noche es una integración con WhatsApp Business que se configura aparte.</p>
+      </section>
+    </div>
+  );
+}
+
+/** Lo que ve quien cuenta la caja mientras siga abierta: los totales de esa jornada salen cuando la cierra. */
+function TotalsAfterCount({ dayLabel, day, yesterday }: { dayLabel: string; day: string; yesterday: string }) {
+  const tab = (active: boolean) => `rounded-xl px-4 py-2 text-[15px] font-semibold ${active ? "bg-tinto text-cal" : "text-tinto-2 hover:bg-tinto/6"}`;
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">{dayLabel}</h1>
+          <p className="text-humo">Jornada con la caja abierta</p>
+        </div>
+        <nav className="flex rounded-2xl bg-papel p-1 ring-1 ring-linea" aria-label="Día">
+          <Link href="/panel" className={tab(day !== yesterday)} aria-current={day !== yesterday ? "page" : undefined}>
+            Hoy
+          </Link>
+          <Link href={`/panel?dia=${yesterday}`} className={tab(day === yesterday)} aria-current={day === yesterday ? "page" : undefined}>
+            Ayer
+          </Link>
+        </nav>
+      </div>
+      <section className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
+        <h2 className="text-lg font-bold">Las ventas de esta jornada se ven al cerrar la caja</h2>
+        <p className="mt-1 max-w-2xl text-tinto-2">
+          El arqueo es a ciegas: quien cuenta el cajón no ve los totales del día mientras la caja siga abierta, porque con ellos se puede calcular cuánto efectivo debería haber. El dueño y la administración sí los ven.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link href="/caja" className={btn("dark", "md")}>
+            Ir a Caja
+          </Link>
+          <Link href="/panel/inventario" className={btn("soft", "md")}>
+            Ver inventario
+          </Link>
+        </div>
       </section>
     </div>
   );

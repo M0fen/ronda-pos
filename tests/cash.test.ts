@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cashView, closedCashView, methodsFor, type CashTotals } from "../lib/core/cash";
+import { cashView, closedCashView, hidesDayTotals, methodsFor, type CashTotals } from "../lib/core/cash";
 import { ownerSummary } from "../lib/summary";
 
 /**
@@ -85,6 +85,28 @@ describe("arqueo a ciegas", () => {
     ];
     expect(methodsFor(methods, true)).toEqual(methods);
     expect(methodsFor(methods, false)).toEqual([{ method: "tarjeta", amount: 456_780, n: 7 }]);
+  });
+
+  it("mientras la caja siga abierta, quien la cuenta no ve los totales de esa jornada", () => {
+    // Con el total del día y lo cobrado por los otros medios sale, restando, el efectivo: por eso no basta quitar una fila
+    const opened = "2026-11-10T11:30:00-05:00";
+    expect(hidesDayTotals(false, opened, "2026-11-10")).toBe(true);
+    // La jornada de ayer ya se contó y se cerró
+    expect(hidesDayTotals(false, opened, "2026-11-09")).toBe(false);
+    // El dueño y la administración ven todo
+    expect(hidesDayTotals(true, opened, "2026-11-10")).toBe(false);
+    // Con la caja cerrada el conteo ya quedó hecho: los totales vuelven a verse
+    expect(hidesDayTotals(false, null, "2026-11-10")).toBe(false);
+    expect(hidesDayTotals(false, undefined, "2026-11-10")).toBe(false);
+    // Una caja que quedó abierta desde ayer cubre las dos jornadas
+    const since = "2026-11-09T18:00:00-05:00";
+    expect(hidesDayTotals(false, since, "2026-11-09")).toBe(true);
+    expect(hidesDayTotals(false, since, "2026-11-10")).toBe(true);
+    expect(hidesDayTotals(false, since, "2026-11-08")).toBe(false);
+    // Abierta a las 2:00 a. m.: todavía es la jornada del día anterior
+    expect(hidesDayTotals(false, "2026-11-10T02:00:00-05:00", "2026-11-09")).toBe(true);
+    // La base la entrega como fecha; también sirve
+    expect(hidesDayTotals(false, new Date(opened), "2026-11-10")).toBe(true);
   });
 
   it("el resumen para WhatsApp que arma la caja no trae el efectivo y lo dice", () => {
