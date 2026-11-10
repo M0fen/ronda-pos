@@ -207,7 +207,7 @@ export async function profitReport(bizId: string, range: { from: string; to: str
               coalesce(mix.all_, 0)::float as mix_all, coalesce(mix.nr, 0)::float as mix_nr
          from checks c
          left join lateral (select sum(p.amount) as total, sum(p.tip) as tip from payments p where p.check_id = c.id and p.status = 'ok') pay on true
-         left join lateral (select sum(v.subtotal) as base from invoices v where v.check_id = c.id) inv on true
+         left join lateral (select sum(v.subtotal) as base from invoices v where v.check_id = c.id and v.voided_at is null) inv on true
          left join lateral (select sum(i.qty * rc.unit_cost) as cogs from check_items i join rc on rc.product_id = i.product_id where i.check_id = c.id and i.status <> 'void') cg on true
          left join lateral (
            select sum(i.qty * i.unit_price) as all_, sum(i.qty * i.unit_price) filter (where rc.product_id is null) as nr
