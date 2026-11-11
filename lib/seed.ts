@@ -62,7 +62,25 @@ export const DEMO_SETTINGS: Settings = {
   theme: { primary: "#171310", accent: "#FFC20E", whiteLabel: true },
   payments: { ...DEFAULT_SETTINGS.payments, nequiPhone: "300 000 0000", brebKey: "@demo-srpatata" },
   loyalty: { enabled: true, minPurchase: 30000, goal: 8, reward: "Una bebida de la casa", rewardMax: 7000 },
-  invoice: { prefix: "SPCI", resolution: "Resolución DIAN de prueba (demo)", provider: "Factus", mode: "demo", rangeFrom: 1001, rangeTo: 200000, validFrom: "2026-01-01", validTo: "2028-12-31" },
+  invoice: {
+    prefix: "SPCI",
+    resolution: "Resolución DIAN de prueba (demo)",
+    provider: "Factus",
+    mode: "demo",
+    rangeFrom: 1001,
+    rangeTo: 200000,
+    validFrom: "2026-01-01",
+    validTo: "2028-12-31",
+    // La factura electrónica (para quien la pide con NIT) tiene su propia resolución y numeración
+    fePrefix: "SPFE",
+    feResolution: "Resolución DIAN de prueba (demo)",
+    feRangeFrom: 1,
+    feRangeTo: 50000,
+    feValidFrom: "2026-01-01",
+    feValidTo: "2028-12-31",
+    regime: "ordinario",
+    responsibilities: "O-33 Impuesto nacional al consumo (ejemplo)",
+  },
   receipt: { footer: "Maestría patatera. La propina es voluntaria. ¡Gracias por venir!" },
   channels: { rappi: true, rappiPct: 25, didi: false, didiPct: 20, propio: true },
   labor: { exonerated: true, arlClass: 1, alertPct: 35, turnos: [{ name: "Almuerzo", from: "11:00" }, { name: "Noche", from: "17:00" }] },
@@ -927,7 +945,7 @@ function sedeSettings(s: Sede): Settings {
   return {
     ...DEMO_SETTINGS,
     business: { ...DEMO_SETTINGS.business, address: s.address, city: s.city },
-    invoice: { ...DEMO_SETTINGS.invoice, prefix: s.prefix },
+    invoice: { ...DEMO_SETTINGS.invoice, prefix: s.prefix, fePrefix: s.prefix.replace(/^SP/, "SF") },
     channels: s.channels,
     labor: { ...DEMO_SETTINGS.labor, turnos: s.turnos },
   };
@@ -1159,6 +1177,7 @@ const PAY_COLS: Col[] = [
 ];
 const INV_COLS: Col[] = [
   ["id", "uuid"], ["business_id", "uuid"], ["check_id", "uuid"], ["number", "int"], ["prefix", "text"], ["cufe", "text"], ["public_token", "text"], ["kind", "text"], ["subtotal", "int"], ["tax", "int"], ["tip", "int"], ["total", "int"], ["created_at", "timestamptz"],
+  ["issued_at", "timestamptz"],
 ];
 
 export function fakeCufe(parts: (string | number)[]) {
@@ -1399,6 +1418,7 @@ async function seedSedeActivity(db: Tx, s: Sede, now: Date) {
         tip,
         total: totals.total + tip,
         created_at: closed.toISOString(),
+        issued_at: closed.toISOString(),
       });
     }
   }

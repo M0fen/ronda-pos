@@ -1,3 +1,4 @@
+import { CODE_LABEL, DOC_TITLE, NOTE_LABEL, SOFTWARE } from "@/lib/core/dian";
 import { suggestedTip } from "@/lib/core/pricing";
 import { fmtFull } from "@/lib/format";
 import type { Business } from "@/lib/server/business";
@@ -7,8 +8,25 @@ import { cop } from "@/lib/money";
 import { METHOD_LABEL } from "@/lib/settings";
 
 /** Tiquete de 80 mm, igual en pantalla y en la impresora térmica. */
-export function Receipt({ business, check, invoice, qr, mode }: { business: Business; check: CheckView; invoice: InvoiceRow | null; qr: string | null; mode: "factura" | "precuenta" }) {
+export function Receipt({
+  business,
+  check,
+  invoice,
+  qr,
+  mode,
+  codes = {},
+}: {
+  business: Business;
+  check: CheckView;
+  invoice: InvoiceRow | null;
+  qr: string | null;
+  mode: "factura" | "precuenta";
+  codes?: Record<string, string>;
+}) {
   const s = business.settings;
+  const type = invoice?.doc_type ?? "pos";
+  // La resolución con la que salió (la de hoy si es un documento viejo sin contenido guardado)
+  const res = invoice?.payload?.resolution ?? { number: s.invoice.resolution, prefix: s.invoice.prefix, from: s.invoice.rangeFrom, to: s.invoice.rangeTo, validTo: s.invoice.validTo };
   const lines = check.items.filter((i) => i.status !== "void" && i.status !== "draft");
   const tip = suggestedTip(check.totals.total, s.tips.suggestedPct);
   return (
@@ -18,26 +36,31 @@ export function Receipt({ business, check, invoice, qr, mode }: { business: Busi
         <p>{s.business.legalName}</p>
         <p>NIT {s.business.nit}</p>
         <p>{s.business.address}</p>
+        {mode === "factura" && s.invoice.responsibilities ? (
+          <p className="text-[11px]">
+            Régimen {s.invoice.regime === "simple" ? "simple de tributación" : "ordinario"} · {s.invoice.responsibilities}
+          </p>
+        ) : null}
       </header>
       <div className="my-3 border-t border-dashed border-black/50" />
       {mode === "precuenta" ? (
         <p className="text-center font-bold">PRE-CUENTA · NO ES FACTURA</p>
       ) : (
         <div className="text-center">
-          <p className="font-bold">FACTURA ELECTRÓNICA DE VENTA</p>
+          <p className={type === "pos" ? "text-[11px] font-bold uppercase" : "font-bold"}>{DOC_TITLE[type].toUpperCase()}</p>
           <p className="font-bold">
             {invoice?.prefix}-{invoice?.number}
           </p>
-          <p>{s.invoice.resolution}</p>
-          {s.invoice.rangeTo ? (
+          <p>{res.number}</p>
+          {res.to ? (
             <p>
-              Rango {s.invoice.prefix}-{s.invoice.rangeFrom} a {s.invoice.prefix}-{s.invoice.rangeTo}
-              {s.invoice.validTo ? ` · vigente hasta ${s.invoice.validTo}` : ""}
+              Rango {res.prefix}-{res.from} a {res.prefix}-{res.to}
+              {res.validTo ? ` · vigente hasta ${res.validTo}` : ""}
             </p>
           ) : null}
           {invoice?.voided_at ? (
             <p className="mt-2 border border-black px-2 py-1 font-bold">
-              ANULADA CON NOTA CRÉDITO {invoice.credit_note ?? ""}
+              ANULADO CON {NOTE_LABEL[type].toUpperCase()} {invoice.credit_note ?? ""}
               {invoice.void_reason ? <span className="block font-normal">{invoice.void_reason}</span> : null}
             </p>
           ) : null}
@@ -45,7 +68,10 @@ export function Receipt({ business, check, invoice, qr, mode }: { business: Busi
       )}
       <div className="my-3 border-t border-dashed border-black/50" />
       <div className="space-y-0.5">
-        <p>Fecha: {fmtFull(invoice?.created_at ?? new Date())}</p>
+        <p>
+          {mode === "factura" ? "Generado" : "Fecha"}: {fmtFull(invoice?.created_at ?? new Date())}
+        </p>
+        {mode === "factura" ? <p>Expedido: {invoice?.issued_at ? fmtFull(invoice.issued_at) : "en validación"}</p> : null}
         <p>
           {check.label} · Cuenta #{check.number}
         </p>
@@ -61,6 +87,7 @@ export function Receipt({ business, check, invoice, qr, mode }: { business: Busi
               <tr key={i.id} className="align-top">
                 <td className="w-7 pr-1 tnum">{i.qty}</td>
                 <td className="pr-2">
+                  {mode === "factura" && i.product_id && codes[i.product_id] ? <span className="text-[11px]">{codes[i.product_id]} </span> : null}
                   {i.name}
                   {i.modifiers.length ? <span className="block text-[11px]">{i.modifiers.map((m) => m.name).join(", ")}</span> : null}
                   {i.courtesy ? <span className="block text-[11px]">Cortesía</span> : null}
@@ -145,10 +172,13 @@ export function Receipt({ business, check, invoice, qr, mode }: { business: Busi
               ))}
           </dl>
           <div className="my-3 border-t border-dashed border-black/50" />
-          <p className="break-all text-[10.5px]">CUFE: {invoice?.cufe}</p>
+          <p className="break-all text-[10.5px]">
+            {CODE_LABEL[type]}: {invoice?.cufe}
+          </p>
           {qr ? <div className="mx-auto mt-3 size-32 [&_svg]:h-full [&_svg]:w-full" dangerouslySetInnerHTML={{ __html: qr }} /> : null}
-          <p className="mt-2 text-center text-[11px]">
-            {s.invoice.mode === "demo" ? "Documento de demostración: no tiene validez ante la DIAN." : `Proveedor tecnológico: ${s.invoice.provider}`}
+          <p className="mt-2 text-center text-[11px]">{legend(invoice, s.invoice.provider)}</p>
+          <p className="text-center text-[10.5px]">
+            Software {SOFTWARE.name} · Fabricante {SOFTWARE.maker}
           </p>
         </>
       ) : null}
@@ -156,4 +186,18 @@ export function Receipt({ business, check, invoice, qr, mode }: { business: Busi
       <p className="text-center">{s.receipt.footer}</p>
     </article>
   );
+}
+
+/** Lo que se dice del documento según su estado ante la DIAN: nunca "validado" si no lo está. */
+function legend(invoice: InvoiceRow | null, provider: string) {
+  switch (invoice?.dian_status) {
+    case "validado":
+      return `Documento validado por la DIAN · Proveedor tecnológico: ${provider}`;
+    case "pendiente":
+      return "En validación ante la DIAN: el local lo transmite en máximo 48 horas.";
+    case "rechazado":
+      return `La DIAN lo rechazó${invoice.dian_message ? `: ${invoice.dian_message}` : ""}. El local debe corregirlo.`;
+    default:
+      return "Documento de demostración: no tiene validez ante la DIAN.";
+  }
 }

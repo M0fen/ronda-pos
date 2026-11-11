@@ -81,6 +81,17 @@ Cada local va en su propio proyecto de Vercel con su propia base. La demo públi
 
 Seguridad: fuera de la demo solo las tablets enroladas muestran al equipo; cada persona se bloquea 15 minutos tras 5 PIN errados; la tablet se bloquea sola tras unos minutos sin uso (Panel → Ajustes); las sesiones se cierran al cambiar un PIN o un rol, o al quitar una tablet. En la base, todas las tablas llevan RLS sin políticas (la API de datos de Supabase no ve nada; la app es la dueña de las tablas y no la afecta) y la conexión va cifrada verificando el certificado de Supabase (`lib/supabase-ca.ts`). En el plan gratis Supabase pausa la base tras 7 días sin uso y no guarda copias: para vender a diario, plan Pro. La factura electrónica no se envía a la DIAN hasta conectar un proveedor tecnológico.
 
+## Facturación ante la DIAN
+
+Cada venta sale como **tiquete POS electrónico** (documento equivalente, con CUDE) o, si el cliente la pide con NIT o cédula y el local tiene esa resolución, como **factura electrónica** (con CUFE). Al anular, el tiquete saca nota de ajuste y la factura nota crédito, cada una con su código. Panel → Ajustes → Facturación dice qué falta (NIT, RUT, resoluciones, códigos de producto) y cómo va el envío.
+
+El documento se arma y se guarda tal como se transmite (`invoices.payload`) y lo envía un proveedor tecnológico después de responder el cobro, con reintentos (1, 5, 15, 60 y luego cada 180 minutos). El panel avisa lo que lleva rato sin validar: la DIAN da 48 horas en contingencia.
+
+Sin proveedor, o con la facturación en modo Simulado, todo sale simulado y el recibo lo dice. Para conectar uno se pone `DIAN_PROVIDER_URL` (y `DIAN_PROVIDER_TOKEN`) con un puente que hable con el proveedor (Factus, Alegra, The Factory HKA…):
+
+- Recibe `POST` con `{ "kind": "document" | "note", "document": {…}, "note"?: { "type": "ajuste" | "credito", "number", "reason", "generatedAt" } }` y `Authorization: Bearer <token>`. El documento trae tipo, ambiente, resolución, emisor, adquirente, líneas con código, totales (la propina aparte), pagos y software (`lib/core/dian.ts`, `DianDocument`).
+- Responde `{ "status": "validado" | "rechazado", "code"?: "<CUDE o CUFE oficial>", "message"?: "…" }`. Otro código HTTP o ninguna respuesta se toma como "sin respuesta" y se reintenta; un rechazo queda a la vista con su motivo.
+
 ## Cómo está hecho
 
 - Next.js 16 (App Router), React 19 y Tailwind 4. Todo se lee en Server Components y todo lo que escribe va por Server Actions (no hay rutas `/api`).

@@ -50,7 +50,7 @@ export async function getSedes(bizId: string) {
 }
 
 /** Consecutivo propio de cada sede para cuentas y facturas: cada una con su numeración y su resolución. */
-export async function nextNumber(tx: Pick<Tx, "one">, bizId: string, kind: "check" | "invoice" | "credit") {
+export async function nextNumber(tx: Pick<Tx, "one">, bizId: string, kind: "check" | "invoice" | "fe" | "credit") {
   const row = await tx.one<{ last: number }>(
     `insert into counters (business_id, kind, last) values ($1, $2, $3)
      on conflict (business_id, kind) do update set last = counters.last + 1 returning last`,

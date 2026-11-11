@@ -21,7 +21,7 @@ export default async function PublicReceipt({ params }: { params: Promise<{ toke
           <Download size={18} /> Guardar en PDF
         </PrintButton>
       </div>
-      <Receipt business={receipt.business} check={receipt.check} invoice={receipt.invoice} qr={receipt.qr} mode="factura" />
+      <Receipt business={receipt.business} check={receipt.check} invoice={receipt.invoice} qr={receipt.qr} mode="factura" codes={receipt.codes} />
     </main>
   );
 }
