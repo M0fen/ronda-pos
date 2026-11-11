@@ -38,6 +38,7 @@ let pay: typeof import("../lib/server/payments");
 let checks: typeof import("../lib/server/checks");
 let dian: typeof import("../lib/server/dian");
 let business: typeof import("../lib/server/business");
+let reports: typeof import("../lib/server/reports");
 let valentina: Staff, juanPablo: Staff, andres: Staff;
 const products = new Map<string, string>();
 
@@ -52,6 +53,7 @@ beforeAll(async () => {
   checks = await import("../lib/server/checks");
   dian = await import("../lib/server/dian");
   business = await import("../lib/server/business");
+  reports = await import("../lib/server/reports");
   biz = (await db.one<{ id: string }>("select id from businesses order by created_at limit 1"))!.id;
   const person = async (name: string) => (await db.one<Staff>("select id, business_id, name, role, color from staff where business_id = $1 and name = $2", [biz, name]))!;
   [valentina, juanPablo, andres] = await Promise.all([person("Valentina"), person("Juan Pablo"), person("Andrés")]);
@@ -237,6 +239,28 @@ describe("envío al proveedor tecnológico", () => {
     expect(inv.note_status).toBe("validado");
     expect(inv.note_code).toBe("cude-nota-1");
     expect(sent.at(-1)).toMatchObject({ kind: "note", note: { type: "ajuste" } });
+  });
+});
+
+describe("para el contador", () => {
+  it("el documento sale con sus pagos y la nota que lo anula, en negativo", async () => {
+    const { accountingCsv } = await import("../lib/core/accounting");
+    const { checkId, invoiceId, total } = await sale([["Antojo de patatas", 2]], { tip: 2000 });
+    await pay.voidSale(andres, checkId, { reason: "Devolución al contador" });
+    const inv = await invoice(invoiceId);
+    const now = Date.now();
+    const docs = await reports.accountingDocs(biz, new Date(now - 3_600_000).toISOString(), new Date(now + 3_600_000).toISOString());
+    const doc = docs.find((d) => d.number === `${inv.prefix}${inv.number}`)!;
+    expect(doc).toMatchObject({ kind: "pos", tip: 2000, total: total + 2000, payments: [{ method: "efectivo", amount: total + 2000 }] });
+    expect(doc.base + doc.tax + doc.tip).toBe(doc.total);
+    const note = docs.find((d) => d.ref === doc.number)!;
+    expect(note).toMatchObject({ kind: "ajuste", base: -doc.base, tax: -doc.tax, total: -doc.total, payments: [], reason: "Devolución al contador" });
+    expect(note.number.startsWith(`NA${inv.prefix}`)).toBe(true);
+    const csv = accountingCsv(docs, { efectivo: "Efectivo" });
+    expect(csv).toContain(`;Tiquete POS electrónico;${doc.number};Consumidor final;222222222222;`);
+    expect(csv).toContain(`;Efectivo ${total + 2000};`);
+    // Fuera del rango no sale nada
+    expect(await reports.accountingDocs(biz, "2020-01-01T00:00:00-05:00", "2020-02-01T00:00:00-05:00")).toEqual([]);
   });
 });
 

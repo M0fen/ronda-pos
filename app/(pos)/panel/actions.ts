@@ -1,7 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireStaff } from "@/lib/server/auth";
+import { accountingCsv, monthBounds } from "@/lib/core/accounting";
+import { can, requireStaff } from "@/lib/server/auth";
+import { getBusiness } from "@/lib/server/business";
+import { accountingDocs } from "@/lib/server/reports";
+import { METHOD_LABEL } from "@/lib/settings";
 import { safely, UserError } from "@/lib/server/errors";
 import { stockMove } from "@/lib/server/inventory";
 import { closeShift } from "@/lib/server/labor";
@@ -165,4 +169,24 @@ export async function placeTableAction(id: string, pos: { x: number; y: number }
 export async function removeTableAction(id: string) {
   const staff = await requireStaff();
   return safely(() => removeTable(staff, String(id)), "Mesa quitada");
+}
+
+/** CSV del mes para el contador: tiquetes, facturas y notas con base, impuesto, propina, medios de pago y estado ante la DIAN. */
+export async function accountingExportAction(month: string) {
+  const staff = await requireStaff();
+  return safely(async () => {
+    if (!can.manage(staff)) throw new UserError("Solo el dueño o la administración exportan para el contador");
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new UserError("Elige un mes");
+    const { from, to } = monthBounds(month);
+    const [biz, docs] = await Promise.all([getBusiness(staff.business_id), accountingDocs(staff.business_id, from, to)]);
+    const slug = (t: string) =>
+      t
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+    const name = [biz.name, biz.sede].filter(Boolean).map((t) => slug(t!)).join("-");
+    return { filename: `contador-${name}-${month}.csv`, csv: accountingCsv(docs, METHOD_LABEL), count: docs.length };
+  });
 }

@@ -75,6 +75,18 @@ describe("reportes", () => {
     expect(cocina.latePct).toBeGreaterThanOrEqual(0);
   });
 
+  it("inventario: lo que faltó al contar sale contra lo que dicen las recetas", async () => {
+    const v = await reports.stockVariance(biz, from, today);
+    expect(v.totals.theoreticalValue).toBeGreaterThan(0);
+    // La demo trae un conteo de tocineta que dio 200 g menos que el sistema
+    const tocineta = v.rows.find((r) => r.name.toLowerCase().includes("tocineta"));
+    expect(tocineta).toBeTruthy();
+    expect(tocineta!.counted).toBeLessThan(0);
+    expect(tocineta!.countValue).toBeLessThan(0);
+    expect(tocineta!.real).toBeCloseTo(tocineta!.theoretical + tocineta!.waste - tocineta!.counted);
+    expect(v.totals.missingValue).toBeLessThan(0);
+  });
+
   it("control: una anulación sale con quién la pidió, quién autorizó y el motivo", async () => {
     const person = async (name: string) => (await db.one<Staff>("select id, business_id, name, role, color from staff where business_id = $1 and name = $2", [biz, name]))!;
     const [juanPablo, valentina] = [await person("Juan Pablo"), await person("Valentina")];

@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AccountingExport } from "@/components/panel/accounting-export";
 import { Empty } from "@/components/ui";
+import { monthsAround } from "@/lib/core/accounting";
 import { engineerMenu, MENU_CLASS, type MenuClass } from "@/lib/core/menu-engineering";
 import { addDays, jornadaKey } from "@/lib/core/time";
-import { fmtNum, fmtShort, fmtTime } from "@/lib/format";
+import { fmtNum, fmtQty, fmtShort, fmtTime } from "@/lib/format";
 import { cop } from "@/lib/money";
 import { can, requireStaff } from "@/lib/server/auth";
 import { getBusiness } from "@/lib/server/business";
-import { type ControlAction, controlReport, dishSales, kitchenTimes, tipShares } from "@/lib/server/reports";
+import { type ControlAction, controlReport, dishSales, kitchenTimes, stockVariance, tipShares } from "@/lib/server/reports";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Reportes" };
@@ -41,12 +43,15 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
   const from = addDays(today, -(span - 1));
   const biz = await getBusiness(staff.business_id);
   const s = biz.settings;
-  const [control, kitchen, dishes, tips] = await Promise.all([
+  const [control, kitchen, dishes, tips, stock] = await Promise.all([
     controlReport(staff.business_id, from, today),
     kitchenTimes(staff.business_id, from, today, { barra: s.kds.barraLate, cocina: s.kds.cocinaLate }),
     dishSales(staff.business_id, from, today),
     tipShares(staff.business_id, from, today, s.tips),
+    stockVariance(staff.business_id, from, today),
   ]);
+  const { current, previous } = monthsAround(new Date());
+  const monthName = (key: string) => new Intl.DateTimeFormat("es-CO", { month: "long", timeZone: "UTC" }).format(new Date(`${key}-15T12:00:00Z`));
   const menu = engineerMenu(dishes);
   const tab = (active: boolean) => cn("rounded-xl px-4 py-2.5 text-[15px] font-semibold", active ? "bg-tinto text-cal" : "text-tinto-2 hover:bg-tinto/6");
   const slowHour = kitchen.hours.filter((h) => h.count >= 5).sort((a, b) => b.avg - a.avg)[0];
@@ -274,6 +279,46 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
       </section>
 
       <section className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
+        <h2 className="font-bold">Inventario: recetas contra conteos</h2>
+        <p className="text-sm text-humo">
+          Por las recetas de lo vendido debieron salir {cop(stock.totals.theoreticalValue)} en insumos. Se registró {cop(stock.totals.wasteValue)} de merma
+          {stock.totals.missingValue ? ` y al contar faltaron ${cop(-stock.totals.missingValue)}` : ""}
+          {stock.totals.extraValue ? ` (sobraron ${cop(stock.totals.extraValue)})` : ""}.
+        </p>
+        {stock.rows.length ? (
+          <div className="table-scroll mt-3">
+            <table className="w-full min-w-[620px] text-left text-[15px]">
+              <thead>
+                <tr className="border-b border-linea text-sm text-humo">
+                  <th className="py-2 pr-3 font-semibold">Insumo</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Por recetas</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Merma</th>
+                  <th className="py-2 pr-3 text-right font-semibold">Al contar</th>
+                  <th className="py-2 text-right font-semibold">Diferencia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stock.rows.map((r) => (
+                  <tr key={r.id} className="border-b border-linea last:border-0">
+                    <td className="py-2 pr-3 font-semibold">{r.name}</td>
+                    <td className="py-2 pr-3 text-right tnum">{fmtQty(r.theoretical, r.unit)}</td>
+                    <td className="py-2 pr-3 text-right tnum">{r.waste ? fmtQty(r.waste, r.unit) : "—"}</td>
+                    <td className={cn("py-2 pr-3 text-right tnum", r.counted < 0 && "font-semibold text-cereza")}>
+                      {r.counted ? `${r.counted < 0 ? "Faltaron" : "Sobraron"} ${fmtQty(Math.abs(r.counted), r.unit)}` : "—"}
+                    </td>
+                    <td className={cn("py-2 text-right font-bold tnum", r.countValue < 0 && "text-cereza")}>{r.counted ? cop(r.countValue) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Empty title="Sin conteos ni mermas en el período">Cuenta los insumos más caros cada semana en Inventario: aquí sale lo que faltó contra lo que dicen las recetas.</Empty>
+        )}
+        {stock.rows.length > 0 && !stock.counted ? <p className="mt-2 text-sm text-humo">Solo hay diferencia donde se contó: cuenta los insumos caros cada semana en Inventario.</p> : null}
+      </section>
+
+      <section className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
         <h2 className="font-bold">Propina por repartir</h2>
         <p className="text-sm text-humo">
           {cop(tips.total)} en el período, {s.tips.split === "horas" ? "repartida por las horas que cada quien marcó con su PIN" : "en partes iguales entre quienes trabajaron"}. Ley 1935: es de quienes atienden y se
@@ -303,6 +348,19 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
         ) : (
           <p className="mt-3 rounded-2xl bg-cal px-4 py-3 text-humo">{tips.total ? "Nadie de los cargos que reciben propina marcó turno en el período." : "Sin propinas en el período."}</p>
         )}
+      </section>
+
+      <section className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
+        <h2 className="font-bold">Para el contador</h2>
+        <p className="text-sm text-humo">
+          Un archivo para Excel con cada tiquete, factura y nota del mes: base, impuesto, propina aparte, medios de pago y estado ante la DIAN. Las notas van en negativo.
+        </p>
+        <AccountingExport
+          months={[
+            { key: previous, label: `Mes de ${monthName(previous)}` },
+            { key: current, label: `${monthName(current).replace(/^./, (c) => c.toUpperCase())}, hasta hoy` },
+          ]}
+        />
       </section>
     </div>
   );

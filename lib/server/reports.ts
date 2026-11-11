@@ -1,4 +1,6 @@
 import "server-only";
+import { type AccountingDoc, inventoryVariance } from "../core/accounting";
+import { CONSUMIDOR_FINAL } from "../core/dian";
 import type { DishSales } from "../core/menu-engineering";
 import { splitTips, type TipSplit } from "../core/tips";
 import { JORNADA_CUTOFF_HOUR, addDays, jornadaKey } from "../core/time";
@@ -368,4 +370,125 @@ export async function tipShares(bizId: string, from: string, to: string, rule: {
   ]);
   const people = shifts.filter((s) => rule.roles.includes(s.role)).map((s) => ({ id: s.staff_id, name: s.name, minutes: Math.round(Number(s.minutes)) }));
   return { total: tip?.total ?? 0, shares: splitTips(tip?.total ?? 0, people, rule.split).sort((a, b) => b.amount - a.amount) };
+}
+
+/**
+ * Insumos en el período: lo que debió salir por las recetas de lo vendido, la merma registrada y lo que faltó o sobró
+ * al contar (las diferencias de los conteos). Solo cuenta lo que se movió en esas jornadas.
+ */
+export async function stockVariance(bizId: string, from: string, to: string) {
+  const db = await getDb();
+  const rows = await db.query<{ id: string; name: string; unit: string; cost: number; venta: number; anulacion: number; merma: number; conteo: number; ajuste: number }>(
+    `select i.id, i.name, i.unit, i.cost::float as cost,
+            coalesce(sum(m.delta) filter (where m.reason = 'venta'), 0)::float as venta,
+            coalesce(sum(m.delta) filter (where m.reason = 'anulacion'), 0)::float as anulacion,
+            coalesce(sum(m.delta) filter (where m.reason = 'merma'), 0)::float as merma,
+            coalesce(sum(m.delta) filter (where m.reason = 'conteo'), 0)::float as conteo,
+            coalesce(sum(m.delta) filter (where m.reason = 'ajuste'), 0)::float as ajuste
+       from ingredients i
+       join stock_movements m on m.ingredient_id = i.id and m.business_id = i.business_id
+        and ${JORNADA("m.created_at")} between $2::date and $3::date
+      where i.business_id = $1
+      group by i.id, i.name, i.unit, i.cost`,
+    [bizId, from, to],
+  );
+  return inventoryVariance(rows.map((r) => ({ ...r, cost: Number(r.cost), venta: Number(r.venta), anulacion: Number(r.anulacion), merma: Number(r.merma), conteo: Number(r.conteo), ajuste: Number(r.ajuste) })));
+}
+
+/**
+ * Los documentos de un rango de fechas para el contador: cada tiquete o factura emitido en el rango y cada nota que
+ * anuló algo en el rango (en negativo). Los medios de pago son los del documento (los que quedaron congelados al emitirlo).
+ */
+export async function accountingDocs(bizId: string, from: string, to: string): Promise<AccountingDoc[]> {
+  const db = await getDb();
+  const rows = await db.query<{
+    check_id: string;
+    prefix: string;
+    number: number;
+    doc_type: "pos" | "fe";
+    customer_doc: string | null;
+    customer_name: string | null;
+    subtotal: number;
+    tax: number;
+    tip: number;
+    total: number;
+    dian_status: string;
+    cufe: string;
+    issued: string | Date;
+    voided_at: string | Date | null;
+    void_reason: string | null;
+    credit_note: number | null;
+    note_code: string | null;
+    note_status: string | null;
+    pay: { method: string; amount: number }[] | null;
+  }>(
+    `select i.check_id, i.prefix, i.number, i.doc_type, i.customer_doc, i.customer_name, i.subtotal, i.tax, i.tip, i.total, i.dian_status, i.cufe,
+            coalesce(i.issued_at, i.created_at) as issued, i.voided_at, i.void_reason, i.credit_note, i.note_code, i.note_status,
+            i.payload->'payments' as pay
+       from invoices i
+      where i.business_id = $1
+        and ((coalesce(i.issued_at, i.created_at) >= $2::timestamptz and coalesce(i.issued_at, i.created_at) < $3::timestamptz)
+          or (i.voided_at >= $2::timestamptz and i.voided_at < $3::timestamptz))`,
+    [bizId, from, to],
+  );
+  // Documentos de antes de guardar su contenido: los pagos se leen de la cuenta
+  // (de una venta anulada, los que se quitaron al anularla)
+  const missing = rows.filter((r) => !Array.isArray(r.pay));
+  const byCheck = new Map<string, { method: string; amount: number }[]>();
+  if (missing.length) {
+    const voided = new Set(missing.filter((r) => r.voided_at).map((r) => r.check_id));
+    for (const p of await db.query<{ check_id: string; method: string; amount: number; status: string }>(
+      "select check_id, method, (amount + tip)::int as amount, status from payments where check_id = any($1::uuid[]) and status in ('ok', 'removed') order by created_at",
+      [missing.map((r) => r.check_id)],
+    ))
+      if (p.status === "ok" || voided.has(p.check_id)) byCheck.set(p.check_id, [...(byCheck.get(p.check_id) ?? []), { method: p.method, amount: Number(p.amount) }]);
+  }
+  const iso = (d: string | Date) => (d instanceof Date ? d : new Date(d)).toISOString();
+  const lo = new Date(from).getTime();
+  const hi = new Date(to).getTime();
+  const docs: AccountingDoc[] = [];
+  for (const r of rows) {
+    const number = `${r.prefix}${r.number}`;
+    const customer = r.customer_name || "Consumidor final";
+    const customerDoc = r.customer_doc || CONSUMIDOR_FINAL;
+    const issued = iso(r.issued);
+    if (new Date(issued).getTime() >= lo && new Date(issued).getTime() < hi)
+      docs.push({
+        at: issued,
+        kind: r.doc_type,
+        number,
+        customer,
+        customerDoc,
+        base: Number(r.subtotal),
+        tax: Number(r.tax),
+        tip: Number(r.tip),
+        total: Number(r.total),
+        payments: (Array.isArray(r.pay) ? r.pay : (byCheck.get(r.check_id) ?? [])).map((p) => ({ method: p.method, amount: Number(p.amount) })),
+        dian: r.dian_status,
+        code: r.cufe,
+        ref: "",
+        reason: "",
+      });
+    if (r.voided_at) {
+      const at = iso(r.voided_at);
+      if (new Date(at).getTime() >= lo && new Date(at).getTime() < hi)
+        docs.push({
+          at,
+          kind: r.doc_type === "fe" ? "credito" : "ajuste",
+          number: `${r.doc_type === "fe" ? "NC" : "NA"}${r.prefix}${r.credit_note ?? ""}`,
+          customer,
+          customerDoc,
+          base: -Number(r.subtotal),
+          tax: -Number(r.tax),
+          tip: -Number(r.tip),
+          total: -Number(r.total),
+          payments: [],
+          dian: r.note_status ?? r.dian_status,
+          code: r.note_code ?? "",
+          ref: number,
+          reason: r.void_reason ?? "",
+        });
+    }
+  }
+  return docs.sort((a, b) => a.at.localeCompare(b.at));
 }
