@@ -1,8 +1,11 @@
 import "server-only";
 import { cookies } from "next/headers";
+import { after } from "next/server";
 import { cache } from "react";
+import { dbReady } from "../db-core";
+import { DEMO_SETTINGS } from "../seed";
 import { DEFAULT_SETTINGS, mergeSettings, type Settings } from "../settings";
-import { getDb, noteWrite, type Tx } from "./db";
+import { getDb, isEphemeralDb, noteWrite, type Tx } from "./db";
 
 export interface Business {
   id: string;
@@ -68,16 +71,43 @@ export interface Brand {
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
-/** Marca que se muestra en todo el sistema: la del local si la activó en Ajustes, o la de Ronda. Nunca falla. */
+const RONDA: Brand = { name: "Ronda", whiteLabel: false, primary: DEFAULT_SETTINGS.theme.primary, accent: DEFAULT_SETTINGS.theme.accent };
+
+/** La marca que sale de los ajustes de un local: la suya si la activó y sus colores son válidos; si no, Ronda. */
+export function brandOf(name: string, theme: Settings["theme"]): Brand {
+  if (!theme.whiteLabel || !HEX.test(theme.primary) || !HEX.test(theme.accent)) return RONDA;
+  return { name, whiteLabel: true, primary: theme.primary, accent: theme.accent };
+}
+
+/** La marca con la que se siembra la demo. En una copia recién arrancada nadie ha cambiado nada: es la que va a leer la base. */
+export function demoBrand(): Brand {
+  return brandOf(DEMO_SETTINGS.business.name, DEMO_SETTINGS.theme);
+}
+
+/**
+ * Marca que se muestra en todo el sistema: la del local si la activó en Ajustes, o la de Ronda. Nunca falla.
+ * En la demo en memoria, mientras la base arranca (primera visita a una copia fría) la marca sembrada se responde
+ * sin esperarla y la base queda arrancando: la portada pinta de una vez y la base ya está lista al entrar al sistema.
+ */
 export const getBrand = cache(async (): Promise<Brand> => {
-  const ronda = { name: "Ronda", whiteLabel: false, primary: DEFAULT_SETTINGS.theme.primary, accent: DEFAULT_SETTINGS.theme.accent };
+  if (isEphemeralDb() && !dbReady()) {
+    const warm = () =>
+      getDb().then(
+        () => undefined,
+        () => undefined,
+      );
+    try {
+      after(warm);
+    } catch {
+      void warm();
+    }
+    return demoBrand();
+  }
   try {
     const biz = await getDefaultBusiness();
-    const t = biz.settings.theme;
-    if (!t.whiteLabel || !HEX.test(t.primary) || !HEX.test(t.accent)) return ronda;
-    return { name: biz.name, whiteLabel: true, primary: t.primary, accent: t.accent };
+    return brandOf(biz.name, biz.settings.theme);
   } catch {
-    return ronda;
+    return RONDA;
   }
 });
 
