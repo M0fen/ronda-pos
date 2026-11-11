@@ -424,7 +424,7 @@ export function Kds({
             <div className="space-y-2">
               {board.ready.map((t) => (
                 <article key={t.key} className="rounded-2xl bg-puerta/20 p-3 ring-1 ring-puerta">
-                  <button onClick={() => openDetail(t.checkId)} className="flex w-full items-center justify-between gap-2 text-left">
+                  <button onClick={() => openDetail(t.checkId)} className="flex min-h-10 w-full items-center justify-between gap-2 text-left">
                     <span className="min-w-0 truncate text-lg font-bold">{t.label}</span>
                     <span className="shrink-0 text-[13px] text-cal/70">{t.waiter}</span>
                   </button>

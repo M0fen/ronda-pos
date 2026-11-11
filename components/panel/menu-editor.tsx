@@ -71,25 +71,19 @@ export function MenuEditor({ menu, costs, ingredients, recipes }: { menu: Menu; 
                 <span className="text-sm font-normal text-humo">· {c.station === "cocina" ? "cocina" : "barra"}</span>
               </h2>
               {products.length ? (
-                <div className="mt-2 overflow-x-auto rounded-2xl bg-papel ring-1 ring-linea">
-                  <table className="w-full min-w-[760px] text-[15px]">
-                    <thead>
-                      <tr className="border-b border-linea text-left text-[13px] text-humo">
-                        <th className="px-4 py-2 font-semibold">Producto</th>
-                        <th className="px-2 py-2 font-semibold">Precio</th>
-                        <th className="px-2 py-2 font-semibold">Happy hour</th>
-                        <th className="px-2 py-2 font-semibold">Costo y margen</th>
-                        <th className="px-2 py-2 text-center font-semibold">Agotado</th>
-                        <th className="px-2 py-2 text-center font-semibold">Visible</th>
-                        <th className="px-2 py-2 text-center font-semibold">Favorito</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {products.map((p) => (
-                        <Row key={`${p.id}:${p.basePrice}:${p.happyPrice}`} p={p} cost={costs[p.id]} save={save} disabled={pending} onEdit={() => setEditing(p)} />
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="mt-2 rounded-2xl bg-papel text-[15px] ring-1 ring-linea">
+                  <div className={cn(ROW_GRID, "hidden border-b border-linea px-4 py-2 text-[13px] font-semibold text-humo lg:grid")}>
+                    <span className="[grid-area:name]">Producto</span>
+                    <span className="[grid-area:price]">Precio</span>
+                    <span className="[grid-area:happy]">Happy hour</span>
+                    <span className="[grid-area:cost]">Costo y margen</span>
+                    <span className="text-center [grid-area:soldout]">Agotado</span>
+                    <span className="text-center [grid-area:visible]">Visible</span>
+                    <span className="text-center [grid-area:fav]">Favorito</span>
+                  </div>
+                  {products.map((p) => (
+                    <Row key={`${p.id}:${p.basePrice}:${p.happyPrice}`} p={p} cost={costs[p.id]} save={save} disabled={pending} onEdit={() => setEditing(p)} />
+                  ))}
                 </div>
               ) : (
                 <p className="mt-2 rounded-2xl bg-papel px-4 py-3 text-humo ring-1 ring-linea">Sin productos todavía.</p>
@@ -198,58 +192,75 @@ function Row({
     if (!(await save(p.id, { happyPrice: value }))) setHappy(p.happyPrice ? String(p.happyPrice) : "");
   };
   return (
-    <tr className={cn("border-b border-linea last:border-0", !active && "opacity-50")}>
-      <td className="px-4 py-2">
-        <button className="flex items-center gap-2 text-left font-semibold underline-offset-4 hover:underline" onClick={onEdit}>
-          {p.name} <Pencil size={14} className="text-humo" />
-        </button>
-      </td>
-      <td className="px-2 py-2">
+    <div className={cn(ROW_GRID, "border-b border-linea px-4 py-3 last:border-0 lg:py-2", !active && "opacity-50")}>
+      <button className="flex min-h-10 items-center gap-2 text-left font-semibold underline-offset-4 [grid-area:name] hover:underline" onClick={onEdit}>
+        {p.name} <Pencil size={14} className="shrink-0 text-humo" />
+      </button>
+      <label className="grid gap-1 [grid-area:price]">
+        <span className="text-[13px] font-semibold text-humo lg:sr-only">Precio</span>
         <input
           inputMode="numeric"
-          className="h-10 w-28 rounded-lg border border-linea-2 px-2 text-right tnum outline-none focus:border-tinto"
+          className="h-11 w-full rounded-lg border border-linea-2 px-2 text-right tnum outline-none focus:border-tinto lg:h-10 lg:w-28"
           value={price}
           onChange={(e) => setPrice(e.target.value.replace(/\D/g, ""))}
           onBlur={savePrice}
           aria-label={`Precio de ${p.name}`}
         />
-      </td>
-      <td className="px-2 py-2">
+      </label>
+      <label className="grid gap-1 [grid-area:happy]">
+        <span className="text-[13px] font-semibold text-humo lg:sr-only">Happy hour</span>
         <input
           inputMode="numeric"
-          className="h-10 w-28 rounded-lg border border-linea-2 px-2 text-right tnum outline-none focus:border-tinto"
+          className="h-11 w-full rounded-lg border border-linea-2 px-2 text-right tnum outline-none focus:border-tinto lg:h-10 lg:w-28"
           value={happy}
           placeholder="—"
           onChange={(e) => setHappy(e.target.value.replace(/\D/g, ""))}
           onBlur={saveHappy}
           aria-label={`Precio de happy hour de ${p.name}`}
         />
-      </td>
-      <td className="px-2 py-2 text-[14px]">
+      </label>
+      <div className="text-[14px] [grid-area:cost]">
         {cost && cost.cost ? (
           <span>
-            {cop(cost.cost)} · <span className={cn("font-semibold", cost.margin < 60 ? "text-cereza" : "text-puerta-2")}>{cost.margin} %</span>
+            <span className="text-humo lg:hidden">Costo </span>
+            {cop(cost.cost)} · <span className="text-humo lg:hidden">margen </span>
+            <span className={cn("font-semibold", cost.margin < 60 ? "text-cereza" : "text-puerta-2")}>{cost.margin} %</span>
           </span>
         ) : (
-          <button className="text-humo underline underline-offset-4" onClick={onEdit}>
+          <button className="min-h-10 text-humo underline underline-offset-4" onClick={onEdit}>
             Sin receta
           </button>
         )}
-      </td>
-      <td className="px-2 py-2 text-center">
-        <input type="checkbox" className="size-5 accent-[var(--color-cereza)]" checked={soldOut} onChange={(e) => (setSoldOut(e.target.checked), save(p.id, { soldOut: e.target.checked }))} aria-label={`${p.name} agotado`} />
-      </td>
-      <td className="px-2 py-2 text-center">
-        <input type="checkbox" className="size-5 accent-[var(--color-balcon)]" checked={active} onChange={(e) => (setActive(e.target.checked), save(p.id, { active: e.target.checked }))} aria-label={`${p.name} visible`} />
-      </td>
-      <td className="px-2 py-2 text-center">
-        <button onClick={() => save(p.id, { favorite: !p.favorite })} disabled={disabled} aria-pressed={p.favorite} aria-label={`${p.name} favorito`} className="inline-flex size-9 items-center justify-center rounded-lg hover:bg-tinto/6">
-          <Star size={18} className={p.favorite ? "fill-fachada text-fachada" : "text-humo"} />
-        </button>
-      </td>
-    </tr>
+      </div>
+      {/* En el celular, interruptores grandes con su nombre; en la tabla, una casilla por columna */}
+      <div className="flex gap-2 [grid-area:flags] lg:contents">
+        <label className={cn(TOGGLE, "has-[:checked]:bg-cereza-soft has-[:checked]:ring-cereza lg:[grid-area:soldout] lg:has-[:checked]:bg-transparent")}>
+          <input type="checkbox" className="size-5 accent-[var(--color-cereza)]" checked={soldOut} onChange={(e) => (setSoldOut(e.target.checked), save(p.id, { soldOut: e.target.checked }))} aria-label={`${p.name} agotado`} />
+          <span className="lg:sr-only">Agotado</span>
+        </label>
+        <label className={cn(TOGGLE, "lg:[grid-area:visible]")}>
+          <input type="checkbox" className="size-5 accent-[var(--color-balcon)]" checked={active} onChange={(e) => (setActive(e.target.checked), save(p.id, { active: e.target.checked }))} aria-label={`${p.name} visible`} />
+          <span className="lg:sr-only">Visible</span>
+        </label>
+      </div>
+      <button
+        onClick={() => save(p.id, { favorite: !p.favorite })}
+        disabled={disabled}
+        aria-pressed={p.favorite}
+        aria-label={`${p.name} favorito`}
+        className="inline-flex size-11 items-center justify-center justify-self-end rounded-lg [grid-area:fav] hover:bg-tinto/6 lg:size-9 lg:justify-self-center"
+      >
+        <Star size={18} className={p.favorite ? "fill-fachada text-fachada" : "text-humo"} />
+      </button>
+    </div>
   );
 }
+
+// Una fila por producto. Desde la tablet horizontal, columnas de tabla; en el celular y la tablet vertical, una tarjeta con todo a la vista
+const ROW_GRID =
+  "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-x-3 gap-y-2 [grid-template-areas:'name_name_fav'_'price_happy_happy'_'cost_cost_cost'_'flags_flags_flags'] lg:grid-cols-[minmax(0,1fr)_7.5rem_7.5rem_10rem_5rem_5rem_4.5rem] lg:items-center lg:gap-y-0 lg:[grid-template-areas:'name_price_happy_cost_soldout_visible_fav']";
+const TOGGLE =
+  "flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl px-3 font-semibold ring-1 ring-linea-2 lg:min-h-10 lg:flex-none lg:rounded-lg lg:px-0 lg:ring-0";
 
 /** Nombre, descripción, categoría, pantalla y receta de un producto. */
 function ProductSheet({
