@@ -72,7 +72,7 @@ export function SettingsForm({
     </label>
   );
   return (
-    <div className="pb-24">
+    <div className="pb-safe-24">
       <h1 className="text-2xl font-bold">Ajustes</h1>
       <p className="text-humo">Todo lo que cambia entre un local y otro se ajusta aquí, sin tocar código.</p>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -246,10 +246,10 @@ export function SettingsForm({
           </div>
           <p className="text-sm font-semibold text-humo">Turnos del local</p>
           {s.labor.turnos.map((tu, i) => (
-            <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2">
+            <div key={i} className="grid grid-cols-[1fr_auto] gap-2 sm:grid-cols-[1fr_auto_auto]">
               <input
                 aria-label="Nombre del turno"
-                className="h-12 min-w-0 rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto"
+                className="col-span-2 h-12 min-w-0 rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto sm:col-span-1"
                 value={tu.name}
                 onChange={(e) => up("labor", "turnos", s.labor.turnos.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
               />
@@ -290,7 +290,7 @@ export function SettingsForm({
           </button>
         </div>
       ) : null}
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-linea bg-cal/95 p-3 backdrop-blur">
+      <div className="pb-safe-3 fixed inset-x-0 bottom-0 z-30 border-t border-linea bg-cal/95 p-3 backdrop-blur">
         <div className="mx-auto flex max-w-[1400px] justify-end">
           <button className={btn("primary", "lg", "min-w-56")} disabled={pending} onClick={save}>
             Guardar ajustes

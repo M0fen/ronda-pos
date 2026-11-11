@@ -482,7 +482,7 @@ export function OrderScreen({
         </div>
         {stockMode ? <p className="bg-cereza-soft px-4 py-2 text-sm font-semibold text-cereza">Toca un producto para marcarlo agotado o disponible.</p> : null}
         {menu.happy ? <p className="bg-fachada-soft px-4 py-2 text-sm font-semibold text-[#6b4b00]">{menu.happyLabel} activo: los precios en amarillo ya tienen el descuento.</p> : null}
-        <div className="flex-1 overflow-y-auto p-3 pb-28 md:pb-3">
+        <div className="pb-safe-28 flex-1 overflow-y-auto p-3 md:pb-3">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(148px,1fr))] gap-2">
             {visible.map((p) => {
               const color = menu.categories.find((c) => c.id === p.categoryId)?.color ?? "#24150F";
@@ -518,7 +518,7 @@ export function OrderScreen({
         {lines}
         {footer}
       </aside>
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-linea bg-papel p-3 md:hidden">
+      <div className="pb-safe-3 fixed inset-x-0 bottom-0 z-30 border-t border-linea bg-papel p-3 md:hidden">
         <button className={btn(sendNow.length ? "send" : "dark", "lg", "w-full justify-between")} onClick={() => setPanelOpen(true)}>
           <span className="truncate">
             {sendNow.length ? `Ver y enviar (${sendUnits}) · ${check.label}` : heldDrafts.length ? `${heldUnits} retenidos · ${check.label}` : `Ver cuenta · ${check.label}`}
@@ -527,7 +527,7 @@ export function OrderScreen({
         </button>
       </div>
       {panelOpen ? (
-        <div className="fixed inset-0 z-50 flex flex-col bg-papel md:hidden" role="dialog" aria-modal="true" aria-label="Cuenta">
+        <div className="fixed inset-0 z-50 flex flex-col bg-papel pb-[env(safe-area-inset-bottom)] md:hidden" role="dialog" aria-modal="true" aria-label="Cuenta">
           <div className="flex justify-end px-2 pt-2">
             <button className="flex size-10 items-center justify-center rounded-full hover:bg-tinto/6" onClick={() => setPanelOpen(false)} aria-label="Cerrar cuenta">
               <X size={20} />

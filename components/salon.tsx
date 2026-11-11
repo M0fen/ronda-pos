@@ -114,7 +114,7 @@ export function Salon({ floor }: { floor: Floor }) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-lg font-bold">{counter ? "Pedidos del mostrador" : "Barra y para llevar"}</h2>
             {floor.deliveries ? (
-              <Link href="/domicilios" className="text-[15px] font-semibold text-balcon underline-offset-4 hover:underline">
+              <Link href="/domicilios" className="-my-2.5 py-2.5 text-[15px] font-semibold text-balcon underline-offset-4 hover:underline">
                 {floor.deliveries} {floor.deliveries === 1 ? "domicilio en curso" : "domicilios en curso"} →
               </Link>
             ) : null}
@@ -124,23 +124,30 @@ export function Salon({ floor }: { floor: Floor }) {
               {floor.others.map((c) => (
                 <li key={c.id}>
                   <Link href={`/cuenta/${c.id}`} className="flex items-center gap-3 rounded-2xl bg-papel px-4 py-3 ring-1 ring-linea hover:ring-tinto">
-                    {c.kind === "barra" ? <Wine size={20} className="text-balcon" /> : <ShoppingBag size={20} className="text-puerta" />}
+                    {c.kind === "barra" ? <Wine size={20} className="shrink-0 text-balcon" /> : <ShoppingBag size={20} className="shrink-0 text-puerta" />}
+                    {/* Dos renglones: el nombre con el total y, debajo, el tiempo con el estado. En uno solo el nombre no cabía en el celular */}
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold">{c.label}</span>
-                      <span className="block text-sm text-humo">
-                        {c.minutesOpen} min · {c.units} productos
+                      <span className="flex items-baseline justify-between gap-2">
+                        <span className="truncate font-semibold">{c.label}</span>
+                        <Money value={c.total} className="shrink-0 font-semibold" />
+                      </span>
+                      <span className="mt-0.5 flex min-h-6 items-center justify-between gap-2">
+                        <span className="truncate text-sm text-humo">
+                          {c.minutesOpen} min · {c.units} productos
+                        </span>
+                        {/* "Listo" solo cuando todo está listo; mientras tanto, cuántos van */}
+                        {c.ready && !c.inStation ? (
+                          <Pill tone="green" className="shrink-0">
+                            Listo
+                          </Pill>
+                        ) : c.ready ? (
+                          <Pill tone="yellow" className="shrink-0">{`${c.ready} de ${c.ready + c.inStation} listos`}</Pill>
+                        ) : c.held && !c.inStation ? (
+                          <Pill tone="blue" className="shrink-0">{`${c.held} retenido${c.held > 1 ? "s" : ""}`}</Pill>
+                        ) : null}
                       </span>
                     </span>
-                    {/* "Listo" solo cuando todo está listo; mientras tanto, cuántos van */}
-                    {c.ready && !c.inStation ? (
-                      <Pill tone="green">Listo</Pill>
-                    ) : c.ready ? (
-                      <Pill tone="yellow">{`${c.ready} de ${c.ready + c.inStation} listos`}</Pill>
-                    ) : c.held && !c.inStation ? (
-                      <Pill tone="blue">{`${c.held} retenido${c.held > 1 ? "s" : ""}`}</Pill>
-                    ) : null}
-                    <Money value={c.total} className="font-semibold" />
-                    <ChevronRight size={18} className="text-humo" />
+                    <ChevronRight size={18} className="shrink-0 text-humo" />
                   </Link>
                 </li>
               ))}

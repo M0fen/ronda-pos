@@ -177,7 +177,7 @@ export function DeliveryBoard({
                             <span className="flex items-center gap-2">
                               <Money value={c.total} className="font-bold" />
                               {c.stage !== "nuevo" ? (
-                                <Link href={`/cuenta/${c.id}`} className="text-sm font-semibold text-balcon underline-offset-4 hover:underline">
+                                <Link href={`/cuenta/${c.id}`} className="-my-3 py-3 text-sm font-semibold text-balcon underline-offset-4 hover:underline">
                                   Cuenta
                                 </Link>
                               ) : null}
@@ -219,7 +219,7 @@ export function DeliveryBoard({
                               </Link>
                             )}
                           </div>
-                          <button className="mt-2 text-sm font-semibold text-cereza underline-offset-4 hover:underline" onClick={() => (setReason(""), setCancel(c))}>
+                          <button className="-mb-2.5 pt-2 pb-2.5 text-sm font-semibold text-cereza underline-offset-4 hover:underline" onClick={() => (setReason(""), setCancel(c))}>
                             Cancelar pedido
                           </button>
                         </div>

@@ -150,7 +150,7 @@ export default async function PanelHome({ searchParams }: { searchParams: Promis
       {labor ? (
         <Link href="/panel/rentabilidad?rango=hoy" className={`flex flex-wrap items-center gap-x-4 gap-y-1 rounded-3xl px-5 py-4 ring-1 ${labor.pct !== null && labor.pct * 100 > labor.alertPct ? "bg-cereza-soft ring-cereza/30" : "bg-papel ring-linea"}`}>
           <Users size={22} className="shrink-0" />
-          <span className="flex-1">
+          <span className="min-w-0 flex-1 basis-52">
             <span className="block font-bold">
               {labor.pct === null ? "Equipo de hoy" : `El equipo va en el ${Math.round(labor.pct * 100)} % de las ventas netas de hoy`}
             </span>

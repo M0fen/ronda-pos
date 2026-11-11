@@ -60,7 +60,7 @@ export function Sheet({
       <div
         ref={ref}
         className={cn(
-          "sheet-panel relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl shadow-2xl sm:rounded-3xl",
+          "sheet-panel relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl shadow-2xl max-sm:pb-[env(safe-area-inset-bottom)] sm:rounded-3xl",
           wide ? "sm:max-w-2xl" : "sm:max-w-md",
           dark ? "bg-noche-2 text-cal" : "bg-papel text-tinto",
         )}

@@ -109,7 +109,7 @@ export function PinLogin({ staff }: { staff: Person[] }) {
 
   return (
     <div className="rounded-3xl bg-papel p-5 shadow-sm ring-1 ring-linea">
-      <button onClick={() => (setWho(null), setPin(""))} className="-ml-1 inline-flex items-center gap-1 rounded-lg px-1 py-1 text-sm font-semibold text-humo hover:text-tinto">
+      <button onClick={() => (setWho(null), setPin(""))} className="-my-2 -ml-1 inline-flex items-center gap-1 rounded-lg px-1 py-3 text-sm font-semibold text-humo hover:text-tinto">
         <ArrowLeft size={16} /> Cambiar persona
       </button>
       <div className="mt-3 flex items-center gap-3">

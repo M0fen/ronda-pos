@@ -36,7 +36,7 @@ export function Toaster() {
     return () => window.removeEventListener("ronda-toast", on);
   }, []);
   return (
-    <div className="no-print pointer-events-none fixed inset-x-0 bottom-[var(--toast-bottom,1rem)] z-[80] flex flex-col items-center gap-2 px-4" aria-live="polite">
+    <div className="no-print pointer-events-none fixed inset-x-0 bottom-[calc(var(--toast-bottom,1rem)+env(safe-area-inset-bottom))] z-[80] flex flex-col items-center gap-2 px-4" aria-live="polite">
       {items.map((t) => (
         // Sin "Deshacer", el aviso no recibe toques: no tapa los botones de abajo
         <div
