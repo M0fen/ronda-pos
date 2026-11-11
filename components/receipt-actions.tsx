@@ -76,7 +76,7 @@ export function ReceiptActions({
           <button className={btn("soft", "lg", "justify-start text-cereza")} onClick={() => (setReason(""), setSheet("anular"))}>
             Anular la venta (devolución)
           </button>
-          <p className="mt-1 text-sm text-humo">Lo autoriza el dueño o la administración. La factura anterior queda anulada con nota crédito y todo queda en el registro.</p>
+          <p className="mt-1 text-sm text-humo">Lo autoriza el dueño o la administración. El documento anterior queda anulado con su nota (de ajuste o crédito) y todo queda en el registro.</p>
         </div>
       </Sheet>
 
@@ -127,7 +127,7 @@ export function ReceiptActions({
           <button
             className={btn("primary", "lg", "w-full")}
             disabled={pending}
-            onClick={() => run((a) => reissueInvoiceAction(checkId, { invoice: { kind, doc, name, email }, auth: a }), "Anular la factura con nota crédito y emitir una nueva", "Factura emitida de nuevo")}
+            onClick={() => run((a) => reissueInvoiceAction(checkId, { invoice: { kind, doc, name, email }, auth: a }), "Anular el documento con su nota y emitir uno nuevo", "Documento emitido de nuevo")}
           >
             Anular y emitir la nueva
           </button>
@@ -164,7 +164,7 @@ export function ReceiptActions({
           </button>
         }
       >
-        <p className="text-[15px]">La factura queda anulada con nota crédito y los pagos se marcan como devueltos. Devuélvele el dinero al cliente.</p>
+        <p className="text-[15px]">El documento queda anulado con su nota y los pagos se marcan como devueltos. Devuélvele el dinero al cliente.</p>
         <input className="mt-3 h-12 w-full rounded-xl border border-linea-2 px-3 outline-none focus:border-tinto" placeholder="Motivo (ej. cobro duplicado, el cliente devolvió el pedido)" value={reason} onChange={(e) => setReason(e.target.value)} />
       </Sheet>
 

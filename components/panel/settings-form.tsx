@@ -18,6 +18,7 @@ export function SettingsForm({
   isOwner,
   canReset,
   lastInvoice,
+  dian,
 }: {
   initial: Settings;
   demo: boolean;
@@ -25,6 +26,8 @@ export function SettingsForm({
   isOwner: boolean;
   canReset: boolean;
   lastInvoice: number;
+  /** Lo que falta para facturar de verdad y cómo va el envío a la DIAN */
+  dian: { problems: string[]; simulated: boolean; provider: string; pending: number; rejected: number; providerUrl: boolean };
 }) {
   const router = useRouter();
   const [s, setS] = useState(initial);
@@ -75,7 +78,8 @@ export function SettingsForm({
     <div className="pb-24">
       <h1 className="text-2xl font-bold">Ajustes</h1>
       <p className="text-humo">Todo lo que cambia entre un local y otro se ajusta aquí, sin tocar código.</p>
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      {/* grid-cols-1: cada tarjeta se ajusta a la pantalla aunque traiga campos de fecha (en el celular no se salen) */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="El local">
           {text("business", "name", "Nombre")}
           {text("business", "legalName", "Razón social")}
@@ -118,6 +122,48 @@ export function SettingsForm({
           </button>
           {toggle("tips", "enabled", "Propina voluntaria", "El cobro pregunta siempre si el cliente la incluye")}
           {text("tips", "suggestedPct", "Propina sugerida (%)", { type: "number", hint: "La ley no permite sugerir más del 10 %" })}
+          <div>
+            <span className="text-sm font-semibold text-humo">Cómo se reparte (Panel → Reportes)</span>
+            <div className="mt-1 grid grid-cols-2 gap-2">
+              {(
+                [
+                  ["horas", "Por horas trabajadas"],
+                  ["partes", "En partes iguales"],
+                ] as const
+              ).map(([m, label]) => (
+                <button key={m} type="button" onClick={() => up("tips", "split", m)} className={cn("min-h-12 rounded-xl px-2 font-semibold ring-1", s.tips.split === m ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span className="text-sm font-semibold text-humo">Quiénes la reciben</span>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {(
+                [
+                  ["waiter", "Meseros"],
+                  ["bar", "Barra y cocina"],
+                  ["cashier", "Caja"],
+                  ["admin", "Administración"],
+                ] as const
+              ).map(([r, label]) => {
+                const on = s.tips.roles.includes(r);
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => up("tips", "roles", on ? s.tips.roles.filter((x) => x !== r) : [...s.tips.roles, r])}
+                    className={cn("min-h-11 rounded-full px-4 font-semibold ring-1", on ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[13px] text-humo">Ley 1935: la propina es de quienes atienden, se reparte al menos cada mes y el local no se queda con nada.</p>
+          </div>
         </Card>
         <Card title="Medios de pago">
           <div className="grid grid-cols-2 gap-2">
@@ -190,11 +236,45 @@ export function SettingsForm({
           <ListEditor label="Para descontar" items={s.reasons.discount} onChange={(v) => up("reasons", "discount", v)} placeholder="Ej. Convenio empresa" />
           <ListEditor label="Notas para barra y cocina" items={s.reasons.notes} onChange={(v) => up("reasons", "notes", v)} placeholder="Ej. Término medio" />
         </Card>
-        <Card title="Resolución de facturación (DIAN)">
-          <div className="grid grid-cols-2 gap-3">
-            {text("invoice", "prefix", "Prefijo", { hint: "Letras y números, hasta 4. Cada sede usa el suyo." })}
-            {text("invoice", "provider", "Proveedor de facturación")}
+        <Card title="Facturación electrónica (DIAN)">
+          <DianStatusBox dian={dian} mode={s.invoice.mode} />
+          <div>
+            <span className="text-sm font-semibold text-humo">Modo</span>
+            <div className="mt-1 grid grid-cols-3 gap-2">
+              {(
+                [
+                  ["demo", "Simulado"],
+                  ["pruebas", "Pruebas"],
+                  ["produccion", "Producción"],
+                ] as const
+              ).map(([m, label]) => (
+                <button key={m} type="button" onClick={() => up("invoice", "mode", m)} className={cn("h-12 rounded-xl font-semibold ring-1", s.invoice.mode === m ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-[13px] text-humo">Pruebas y producción transmiten por el proveedor tecnológico. Sin proveedor conectado, todo sale simulado.</p>
           </div>
+          <div>
+            <span className="text-sm font-semibold text-humo">Régimen (como dice el RUT)</span>
+            <div className="mt-1 grid grid-cols-2 gap-2">
+              {(
+                [
+                  ["ordinario", "Ordinario"],
+                  ["simple", "Simple de tributación"],
+                ] as const
+              ).map(([r, label]) => (
+                <button key={r} type="button" onClick={() => up("invoice", "regime", r)} className={cn("h-12 rounded-xl font-semibold ring-1", s.invoice.regime === r ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {text("invoice", "responsibilities", "Responsabilidades del RUT", { hint: "Ej. O-33 Impuesto nacional al consumo. Van impresas en cada documento." })}
+          {text("invoice", "provider", "Proveedor tecnológico")}
+          <p className="pt-2 font-bold">Tiquete POS electrónico</p>
+          <p className="text-[13px] text-humo">Lo que recibe casi todo cliente. Con NIT o cédula, el cliente también puede deducirlo.</p>
+          {text("invoice", "prefix", "Prefijo", { hint: "Letras y números, hasta 4. Cada sede usa el suyo." })}
           {text("invoice", "resolution", "Número de la resolución")}
           <div className="grid grid-cols-2 gap-3">
             {text("invoice", "rangeFrom", "Rango desde", { type: "number" })}
@@ -210,6 +290,16 @@ export function SettingsForm({
           ) : (
             <p className="text-[13px] text-humo">Con el rango y la vigencia cargados, el sistema avisa antes de que se acaben y no factura por fuera de ellos.</p>
           )}
+          <p className="pt-2 font-bold">Factura electrónica (opcional)</p>
+          <p className="text-[13px] text-humo">Para quien la pide con NIT o cédula. Sin esta resolución, esa persona recibe el tiquete POS con sus datos.</p>
+          {text("invoice", "fePrefix", "Prefijo de la factura", { hint: "Distinto al del tiquete POS" })}
+          {text("invoice", "feResolution", "Número de la resolución")}
+          <div className="grid grid-cols-2 gap-3">
+            {text("invoice", "feRangeFrom", "Rango desde", { type: "number" })}
+            {text("invoice", "feRangeTo", "Rango hasta", { type: "number" })}
+            {text("invoice", "feValidFrom", "Vigente desde", { type: "date" })}
+            {text("invoice", "feValidTo", "Vigente hasta", { type: "date" })}
+          </div>
         </Card>
         <Card title="Domicilios">
           {toggle("channels", "rappi", "Rappi")}
@@ -355,5 +445,31 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
       <h2 className="font-bold">{title}</h2>
       {children}
     </section>
+  );
+}
+
+/** Cómo está la facturación: simulada o conectada, lo pendiente y lo que falta cargar. */
+function DianStatusBox({ dian, mode }: { dian: { problems: string[]; simulated: boolean; provider: string; pending: number; rejected: number; providerUrl: boolean }; mode: Settings["invoice"]["mode"] }) {
+  const real = mode !== "demo" && dian.providerUrl;
+  return (
+    <div className={cn("rounded-2xl p-3 text-sm", dian.problems.length || dian.rejected ? "bg-fachada-soft text-[#6b4b00]" : real ? "bg-puerta-soft" : "bg-cal")}>
+      <p className="font-semibold">
+        {real ? `Conectada a ${dian.provider}${mode === "pruebas" ? " (pruebas)" : ""}.` : mode !== "demo" ? "Falta conectar el proveedor tecnológico: por ahora todo sale simulado." : "Simulada: los documentos no se envían a la DIAN y así lo dicen."}
+        {dian.pending ? ` ${dian.pending} por validar.` : ""}
+        {dian.rejected ? ` ${dian.rejected} rechazados: revisa el motivo en cada recibo.` : ""}
+      </p>
+      {dian.problems.length ? (
+        <>
+          <p className="mt-2">Para facturar de verdad falta:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {dian.problems.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <p className="mt-1">Datos del local, resolución y códigos de producto: completos.</p>
+      )}
+    </div>
   );
 }

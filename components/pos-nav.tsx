@@ -1,6 +1,6 @@
 "use client";
 
-import { Lock, LogOut, Martini, Menu } from "lucide-react";
+import { ChevronDown, Lock, LogOut, Martini, Menu } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
@@ -46,16 +46,17 @@ export function PosNav({
     router.replace("/entrar");
   };
   return (
-    <header className="no-print sticky top-0 z-40 border-b border-linea bg-cal/95 backdrop-blur">
+    <header className="no-print sticky top-(--offline-h,0px) z-40 border-b border-linea bg-cal/95 backdrop-blur">
       <div className="flex h-14 items-center gap-3 px-3 sm:px-4">
         <Link href="/salon" className="hidden shrink-0 text-xl font-extrabold tracking-tight [font-stretch:118%] md:block">
           {whiteLabel ? business : "ronda"}
         </Link>
         {whiteLabel ? (sede ? <span className="hidden max-w-[180px] truncate text-sm text-humo lg:block">{sede}</span> : null) : <span className="hidden max-w-[180px] truncate text-sm text-humo lg:block">{[business, sede].filter(Boolean).join(" · ")}</span>}
         {/* En el celular no caben todas: un menú que dice dónde estás y muestra el resto */}
-        <button onClick={() => setMenu(true)} className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-xl px-2 text-left font-semibold md:hidden" aria-label="Menú">
+        <button onClick={() => setMenu(true)} className="mr-auto flex h-11 min-w-0 items-center gap-2 rounded-xl bg-tinto/6 pr-2.5 pl-3 text-left font-semibold md:hidden" aria-label="Menú" aria-haspopup="dialog">
           <Menu size={20} className="shrink-0" />
           <span className="truncate">{current?.label ?? "Menú"}</span>
+          <ChevronDown size={16} className="shrink-0 text-humo" />
         </button>
         <nav className="hidden flex-1 items-center gap-1 overflow-x-auto md:flex md:justify-center">
           {links.map((l) => (

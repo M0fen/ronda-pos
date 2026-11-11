@@ -47,6 +47,8 @@
     color: var(--color-tinto);
     font-family: var(--font-sans);
     font-size: 16px;
+    /* El aviso de "Sin conexión" corre la pantalla hacia abajo en lugar de taparla (lo pone OfflineNotice) */
+    padding-top: var(--offline-h, 0px);
   }
 
   ::selection {
@@ -72,11 +74,35 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Una cuadrícula nunca empuja la pantalla: sus hijos se pueden encoger (en el celular, lo largo se corta o baja de
+   línea). Sin esto, un campo de fecha o un nombre largo agranda la página y el celular la muestra alejada. */
+@layer base {
+  .grid > * {
+    min-width: 0;
+  }
+}
+
 .scrollbar-none {
   scrollbar-width: none;
 }
 .scrollbar-none::-webkit-scrollbar {
   display: none;
+}
+
+/* Tabla ancha en una pantalla angosta: la primera columna se queda quieta y una sombra en el borde avisa que hay más
+   (la sombra se va cuando se llega al final). Va sobre fondo papel. */
+.table-scroll {
+  overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--color-papel) 30%, transparent) left / 2.5rem 100% no-repeat local,
+    linear-gradient(to left, var(--color-papel) 30%, transparent) right / 2.5rem 100% no-repeat local,
+    radial-gradient(farthest-side at 100% 50%, rgb(36 21 15 / 0.16), transparent) right / 0.9rem 100% no-repeat scroll;
+}
+.table-scroll :is(th, td):first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--color-papel);
 }
 
 /* Borde inferior dentado, como el corte del papel térmico */
@@ -286,6 +312,7 @@
 @media print {
   body {
     background: #fff;
+    padding-top: 0;
   }
   .no-print {
     display: none !important;

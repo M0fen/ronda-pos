@@ -50,7 +50,7 @@ export async function getSedes(bizId: string) {
 }
 
 /** Consecutivo propio de cada sede para cuentas y facturas: cada una con su numeración y su resolución. */
-export async function nextNumber(tx: Pick<Tx, "one">, bizId: string, kind: "check" | "invoice" | "credit") {
+export async function nextNumber(tx: Pick<Tx, "one">, bizId: string, kind: "check" | "invoice" | "fe" | "credit") {
   const row = await tx.one<{ last: number }>(
     `insert into counters (business_id, kind, last) values ($1, $2, $3)
      on conflict (business_id, kind) do update set last = counters.last + 1 returning last`,
@@ -81,9 +81,13 @@ export const getBrand = cache(async (): Promise<Brand> => {
   }
 });
 
+/** Las dos primeras iniciales del nombre del local ("Sr. Patata" → "SP"). */
+export const brandInitials = (b: Pick<Brand, "name">) =>
+  b.name.replace(/[^\p{L}\p{N} ]/gu, "").split(" ").filter(Boolean).map((w) => w[0]!.toUpperCase()).slice(0, 2).join("");
+
 /** Ícono con las iniciales del local, en sus colores. */
 export function brandIcon(b: Brand) {
-  const initials = b.name.replace(/[^\p{L}\p{N} ]/gu, "").split(" ").filter(Boolean).map((w) => w[0]!.toUpperCase()).slice(0, 2).join("");
+  const initials = brandInitials(b);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="16" fill="${b.primary}"/><text x="32" y="42" font-family="Arial,Helvetica,sans-serif" font-size="28" font-weight="900" text-anchor="middle" fill="${b.accent}">${initials}</text></svg>`;
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }

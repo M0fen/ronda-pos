@@ -1,14 +1,16 @@
 import "server-only";
+import { CONSUMIDOR_FINAL, type DianDocType } from "../core/dian";
 import { stampsEarned } from "../core/pricing";
 import { bogotaParts } from "../core/time";
 import { cop } from "../money";
-import { fakeCufe, token } from "../seed";
+import { token } from "../seed";
 import { METHOD_LABEL } from "../settings";
 import { normalizePhone } from "../utils";
 import { can, requireAuth, verifyAuthorizer, type AuthInput, type Staff } from "./auth";
 import { audit, bump, getBusiness, nextNumber, type Business } from "./business";
 import { assertNotOverpaid, isClosed, loadCheck, promoteSplit } from "./checks";
 import { getDb, type Tx } from "./db";
+import { docTypeFor, issueDocumentTx, noteForVoidTx, resolutionFor } from "./dian";
 import { UserError } from "./errors";
 
 const METHODS = ["efectivo", "nequi", "breb", "tarjeta", "daviplata"] as const;
@@ -141,11 +143,12 @@ export interface CloseInput {
 }
 
 /** Rango y vigencia de la resolución de facturación: fuera de ellos no se factura. */
-function checkResolution(biz: Business, number: number, now: Date) {
-  const inv = biz.settings.invoice;
+function checkResolution(biz: Business, type: DianDocType, number: number, now: Date) {
+  const r = resolutionFor(biz.settings, type);
+  const what = type === "fe" ? "de factura electrónica" : "del tiquete POS electrónico";
   const today = bogotaParts(now).dayKey;
-  if (inv.validTo && today > inv.validTo) throw new UserError(`La resolución de facturación venció el ${inv.validTo}. Actualízala en Ajustes con la nueva de la DIAN.`);
-  if (inv.rangeTo && number > inv.rangeTo) throw new UserError(`Se acabó el rango de facturación autorizado (hasta el ${inv.rangeTo}). Pide una nueva resolución a la DIAN y actualízala en Ajustes.`);
+  if (r.validTo && today > r.validTo) throw new UserError(`La resolución ${what} venció el ${r.validTo}. Actualízala en Ajustes con la nueva de la DIAN.`);
+  if (r.to && number > r.to) throw new UserError(`Se acabó el rango autorizado ${what} (hasta el ${r.to}). Pide una nueva resolución a la DIAN y actualízala en Ajustes.`);
 }
 
 /** Cierra la cuenta: emite la factura electrónica (simulada en la demo), suma sellos y libera la mesa. */
@@ -195,31 +198,20 @@ export async function closeCheckTx(tx: Tx, staff: Staff, biz: Business, checkId:
   let invoiceId: string | null = null;
   if (check.totals.total > 0) {
     const now = new Date();
-    const number = await nextNumber(tx, staff.business_id, "invoice");
-    checkResolution(biz, number, now);
-    const doc = nit ? input.invoice.doc!.trim().slice(0, 20) : "222222222222";
-    const inv = await tx.one<{ id: string }>(
-      `insert into invoices (business_id, check_id, prefix, cufe, public_token, kind, customer_doc, customer_name, customer_email, subtotal, tax, tip, total, number)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) returning id`,
-      [
-        staff.business_id,
-        checkId,
-        biz.settings.invoice.prefix,
-        // CUFE simulado con la misma receta de la DIAN (SHA-384 de número, fecha, valores y documentos)
-        fakeCufe([biz.settings.invoice.prefix, number, now.toISOString(), check.totals.base, check.totals.tax, check.totals.total, biz.settings.business.nit, doc]),
-        token(`inv:${checkId}:${now.getTime()}`, 16),
-        nit ? "nit" : "consumidor",
-        doc,
-        nit ? input.invoice.name!.trim().slice(0, 80) : "Consumidor final",
-        input.invoice?.email?.trim().slice(0, 80) || null,
-        check.totals.base,
-        check.totals.tax,
-        check.tips,
-        check.totals.total + check.tips,
-        number,
-      ],
-    );
-    invoiceId = inv!.id;
+    // Tiquete POS electrónico; factura electrónica si el cliente la pide con NIT o cédula y el local tiene esa resolución
+    const type = docTypeFor(biz.settings, nit);
+    const number = await nextDocNumber(tx, biz, type);
+    checkResolution(biz, type, number, now);
+    const issued = await issueDocumentTx(tx, {
+      biz,
+      check,
+      type,
+      number,
+      buyer: buyerOf(input.invoice),
+      publicToken: token(`inv:${checkId}:${now.getTime()}`, 16),
+      now,
+    });
+    invoiceId = issued.id;
   }
 
   await tx.query("update checks set status = 'paid', closed_at = now(), closed_by = $2, tip_answer = $3, customer_id = $4, updated_at = now() where id = $1", [
@@ -344,10 +336,38 @@ export async function changePaymentMethod(staff: Staff, paymentId: string, input
   });
 }
 
-async function voidInvoiceTx(tx: Tx, staff: Staff, invoiceId: string, reason: string) {
+async function voidInvoiceTx(tx: Tx, staff: Staff, biz: Business, invoiceId: string, reason: string) {
   const credit = await nextNumber(tx, staff.business_id, "credit");
-  await tx.query("update invoices set status = 'anulada', voided_at = now(), voided_by = $2, void_reason = $3, credit_note = $4 where id = $1", [invoiceId, staff.id, reason, credit]);
+  const row = await tx.one<{ doc_type: DianDocType; voided_at: string }>(
+    "update invoices set status = 'anulada', voided_at = now(), voided_by = $2, void_reason = $3, credit_note = $4 where id = $1 returning doc_type, voided_at",
+    [invoiceId, staff.id, reason, credit],
+  );
+  // El tiquete POS se anula con nota de ajuste y la factura con nota crédito; cada una va a la DIAN con su código
+  await noteForVoidTx(tx, invoiceId, biz.settings, { type: row!.doc_type === "fe" ? "credito" : "ajuste", number: credit, reason, generatedAt: new Date(row!.voided_at).toISOString() });
   return credit;
+}
+
+/** El siguiente número de la resolución de ese documento: una resolución nueva empieza donde dice su rango. */
+async function nextDocNumber(tx: Tx, biz: Business, type: DianDocType) {
+  const kind = type === "fe" ? "fe" : "invoice";
+  const n = await nextNumber(tx, biz.id, kind);
+  const from = resolutionFor(biz.settings, type).from;
+  if (from && n < from) {
+    await tx.query("update counters set last = $3 where business_id = $1 and kind = $2", [biz.id, kind, from]);
+    return from;
+  }
+  return n;
+}
+
+/** Quien recibe el documento: consumidor final o el NIT o la cédula que dio. */
+function buyerOf(invoice: CloseInput["invoice"] | undefined) {
+  const identified = invoice?.kind === "nit";
+  return {
+    identified,
+    doc: identified ? invoice!.doc!.trim().slice(0, 20) : CONSUMIDOR_FINAL,
+    name: identified ? invoice!.name!.trim().slice(0, 80) : "Consumidor final",
+    email: invoice?.email?.trim().slice(0, 80) || null,
+  };
 }
 
 /** Refactura una cuenta cerrada con otros datos (por ejemplo, con NIT): anula la factura con nota crédito y emite una nueva. */
@@ -368,34 +388,18 @@ export async function reissueInvoice(staff: Staff, checkId: string, input: { inv
     );
     if (!inv || inv.check_status !== "paid") throw new UserError("Esa cuenta no tiene una factura vigente");
     const who = requireAuth(!can.manage(staff), staff, authorizedBy, "manage");
-    const credit = await voidInvoiceTx(tx, staff, inv.id, "Refacturada con otros datos");
+    const credit = await voidInvoiceTx(tx, staff, biz, inv.id, "Refacturada con otros datos");
     const now = new Date();
-    const number = await nextNumber(tx, staff.business_id, "invoice");
-    checkResolution(biz, number, now);
-    const doc = nit ? input.invoice.doc!.trim().slice(0, 20) : "222222222222";
-    const row = await tx.one<{ id: string }>(
-      `insert into invoices (business_id, check_id, prefix, cufe, public_token, kind, customer_doc, customer_name, customer_email, subtotal, tax, tip, total, number)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) returning id`,
-      [
-        staff.business_id,
-        checkId,
-        biz.settings.invoice.prefix,
-        fakeCufe([biz.settings.invoice.prefix, number, now.toISOString(), inv.subtotal, inv.tax, inv.total - inv.tip, biz.settings.business.nit, doc]),
-        token(`inv:${checkId}:${now.getTime()}`, 16),
-        nit ? "nit" : "consumidor",
-        doc,
-        nit ? input.invoice.name!.trim().slice(0, 80) : "Consumidor final",
-        input.invoice?.email?.trim().slice(0, 80) || null,
-        inv.subtotal,
-        inv.tax,
-        inv.tip,
-        inv.total,
-        number,
-      ],
-    );
-    await audit(tx, staff.business_id, staff.id, "invoice_reissued", { from: `${inv.prefix}${inv.number}`, to: `${biz.settings.invoice.prefix}${number}`, creditNote: credit, authorizedBy: who.name }, inv.total);
+    const check = await loadCheck(staff.business_id, checkId, tx);
+    if (!check) throw new UserError("Cuenta no encontrada");
+    const type = docTypeFor(biz.settings, nit);
+    const number = await nextDocNumber(tx, biz, type);
+    checkResolution(biz, type, number, now);
+    const issued = await issueDocumentTx(tx, { biz, check, type, number, buyer: buyerOf(input.invoice), publicToken: token(`inv:${checkId}:${now.getTime()}`, 16), now });
+    const prefix = resolutionFor(biz.settings, type).prefix;
+    await audit(tx, staff.business_id, staff.id, "invoice_reissued", { from: `${inv.prefix}${inv.number}`, to: `${prefix}${number}`, creditNote: credit, authorizedBy: who.name }, inv.total);
     await bump(tx, staff.business_id);
-    return row!.id;
+    return issued.id;
   });
 }
 
@@ -404,6 +408,7 @@ export async function voidSale(staff: Staff, checkId: string, input: { reason: s
   const reason = (input.reason ?? "").trim().slice(0, 120);
   if (reason.length < 3) throw new UserError("Escribe el motivo de la anulación");
   const authorizedBy = await verifyAuthorizer(staff, input.auth, "manage");
+  const biz = await getBusiness(staff.business_id);
   const db = await getDb();
   await db.tx(async (tx) => {
     const check = await lockCheck(tx, staff.business_id, checkId);
@@ -415,7 +420,7 @@ export async function voidSale(staff: Staff, checkId: string, input: { reason: s
     if (closedSession) throw new UserError("Esa venta es de una caja que ya se cerró: no se puede anular desde aquí");
     const who = requireAuth(!can.manage(staff), staff, authorizedBy, "manage");
     const inv = await tx.one<{ id: string }>("select id from invoices where check_id = $1 and voided_at is null", [checkId]);
-    const credit = inv ? await voidInvoiceTx(tx, staff, inv.id, reason) : null;
+    const credit = inv ? await voidInvoiceTx(tx, staff, biz, inv.id, reason) : null;
     await tx.query("update payments set status = 'removed', removed_by = $2, removed_at = now(), removed_reason = $3 where check_id = $1 and status = 'ok'", [checkId, staff.id, `Venta anulada: ${reason}`]);
     const stamps = await tx.query<{ customer_id: string; delta: number }>("select customer_id, delta from loyalty_ledger where check_id = $1 and delta > 0", [checkId]);
     for (const s of stamps) {

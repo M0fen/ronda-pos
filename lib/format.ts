@@ -25,6 +25,10 @@ export const fmtWhen = (d: Date | string, now = new Date()) => {
 };
 export const minutesAgo = (d: Date | string, now = Date.now()) => Math.max(0, Math.floor((now - new Date(d).getTime()) / 60_000));
 
+const num1 = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 1 });
+/** "99,8": decimales con coma, como se escriben en Colombia */
+export const fmtNum = (n: number) => num1.format(n);
+
 export function fmtQty(n: number, unit: string) {
-  return `${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 1 }).format(n)} ${unit}`;
+  return `${fmtNum(n)} ${unit}`;
 }

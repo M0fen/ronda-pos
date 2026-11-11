@@ -50,16 +50,23 @@ function ModifierGroups({ list, picked, setPicked }: { list: MenuGroup[]; picked
           <div className="mt-2 grid grid-cols-2 gap-2">
             {g.options.map((o) => {
               const on = picked[g.id]?.includes(o.id);
+              // Una opción agotada se ve, pero no se puede elegir
+              const out = o.soldOut && !on;
               return (
                 <button
                   key={o.id}
                   type="button"
-                  onClick={() => toggle(g, o.id)}
-                  className={cn("flex min-h-12 items-center justify-between gap-2 rounded-xl px-3 text-left text-[15px] font-semibold ring-1 transition", on ? "bg-tinto text-cal ring-tinto" : "bg-papel ring-linea-2 hover:ring-tinto")}
+                  onClick={() => !out && toggle(g, o.id)}
+                  disabled={out}
+                  className={cn(
+                    "flex min-h-12 items-center justify-between gap-2 rounded-xl px-3 text-left text-[15px] font-semibold ring-1 transition",
+                    on ? "bg-tinto text-cal ring-tinto" : "bg-papel ring-linea-2 hover:ring-tinto",
+                    out && "cursor-not-allowed opacity-45 hover:ring-linea-2",
+                  )}
                   aria-pressed={on}
                 >
                   <span>{o.name}</span>
-                  {o.price ? <span className={cn("text-sm tnum", on ? "text-cal/80" : "text-humo")}>+{cop(o.price)}</span> : null}
+                  {out ? <span className="text-[13px] text-cereza">Agotada</span> : o.price ? <span className={cn("text-sm tnum", on ? "text-cal/80" : "text-humo")}>+{cop(o.price)}</span> : null}
                 </button>
               );
             })}
@@ -117,7 +124,7 @@ export function ModifierSheet({
   // Se reinicia solo al abrir otro producto: si la pantalla se refresca (otra tablet hizo algo), lo elegido no se pierde
   useEffect(() => {
     if (!product) return;
-    setPicked(Object.fromEntries(list.map((g) => [g.id, g.options.filter((o) => o.isDefault).map((o) => o.id)])));
+    setPicked(Object.fromEntries(list.map((g) => [g.id, g.options.filter((o) => o.isDefault && !o.soldOut).map((o) => o.id)])));
     setQty(1);
     setNote("");
   }, [product?.id]);

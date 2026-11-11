@@ -202,13 +202,24 @@ export async function profitReport(bizId: string, range: { from: string; to: str
          select r.product_id, sum(r.qty * g.cost)::float as unit_cost
            from recipe_items r join ingredients g on g.id = r.ingredient_id
           where r.business_id = $1 group by r.product_id
+       ),
+       -- Lo que gasta cada opción ("Tocineta" 30 g) también es costo de lo vendido
+       mc as (
+         select m.modifier_id::text as id, sum(m.qty * g.cost)::float as unit_cost
+           from modifier_recipe_items m join ingredients g on g.id = m.ingredient_id
+          where m.business_id = $1 group by m.modifier_id
        )
-       select c.id, c.opened_by, c.closed_at, c.channel, coalesce(pay.total, 0)::int as total, coalesce(pay.tip, 0)::int as tip, inv.base::int as base, coalesce(cg.cogs, 0)::float as cogs,
+       select c.id, c.opened_by, c.closed_at, c.channel, coalesce(pay.total, 0)::int as total, coalesce(pay.tip, 0)::int as tip, inv.base::int as base, (coalesce(cg.cogs, 0) + coalesce(mg.cogs, 0))::float as cogs,
               coalesce(mix.all_, 0)::float as mix_all, coalesce(mix.nr, 0)::float as mix_nr
          from checks c
          left join lateral (select sum(p.amount) as total, sum(p.tip) as tip from payments p where p.check_id = c.id and p.status = 'ok') pay on true
          left join lateral (select sum(v.subtotal) as base from invoices v where v.check_id = c.id) inv on true
          left join lateral (select sum(i.qty * rc.unit_cost) as cogs from check_items i join rc on rc.product_id = i.product_id where i.check_id = c.id and i.status <> 'void') cg on true
+         left join lateral (
+           select sum(i.qty * mc.unit_cost) as cogs
+             from check_items i cross join lateral jsonb_array_elements(i.modifiers) e join mc on mc.id = e->>'id'
+            where i.check_id = c.id and i.status <> 'void'
+         ) mg on true
          left join lateral (
            select sum(i.qty * i.unit_price) as all_, sum(i.qty * i.unit_price) filter (where rc.product_id is null) as nr
              from check_items i left join rc on rc.product_id = i.product_id

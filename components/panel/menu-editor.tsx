@@ -1,28 +1,54 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Pencil, Plus, Star, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Pencil, Plus, Star, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { createProductAction, deleteCategoryAction, moveCategoryAction, saveCategoryAction, setRecipeAction, updateProductAction } from "@/app/(pos)/panel/actions";
+import {
+  createProductAction,
+  deleteCategoryAction,
+  moveCategoryAction,
+  saveCategoryAction,
+  setProductOptionGroupsAction,
+  setRecipeAction,
+  updateProductAction,
+} from "@/app/(pos)/panel/actions";
 import { btn } from "@/components/ui";
 import { fmtQty } from "@/lib/format";
+import { type PriceChannel, SALE_CHANNEL_LABEL, type SaleChannel } from "@/lib/core/channels";
+import type { OptionGroupView } from "@/lib/server/catalog";
 import type { Menu, MenuCategory, MenuProduct } from "@/lib/server/menu";
 import { cop, parsePesos, parseQty } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import { Sheet } from "../sheet";
 import { report, toast } from "../toast";
+import { describeRule, OptionsSheet } from "./options-editor";
+import { type Ingredient, RecipeLines, type RecipeLine, recipeCost } from "./recipe-lines";
 
-type Ingredient = { id: string; name: string; unit: string; cost: number };
 type Recipe = Record<string, { ingredientId: string; qty: number }[]>;
 
 const COLORS = ["#7A4A2A", "#C2541B", "#D2232A", "#B07800", "#E0A100", "#0B7A55", "#1E4FB8", "#6B3FA0"];
 const input = "mt-1 h-12 w-full rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto";
 
-export function MenuEditor({ menu, costs, ingredients, recipes }: { menu: Menu; costs: Record<string, { cost: number; margin: number }>; ingredients: Ingredient[]; recipes: Recipe }) {
+export function MenuEditor({
+  menu,
+  costs,
+  ingredients,
+  recipes,
+  groups,
+  channels,
+}: {
+  menu: Menu;
+  costs: Record<string, { cost: number; margin: number }>;
+  ingredients: Ingredient[];
+  recipes: Recipe;
+  groups: OptionGroupView[];
+  channels: { price: PriceChannel[]; visible: SaleChannel[] };
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [adding, setAdding] = useState(false);
   const [cats, setCats] = useState(false);
+  const [opts, setOpts] = useState(false);
   const [editing, setEditing] = useState<MenuProduct | null>(null);
   const [draft, setDraft] = useState({ name: "", categoryId: menu.categories[0]?.id ?? "", price: "" });
   const save = (id: string, patch: Parameters<typeof updateProductAction>[1]) =>
@@ -40,9 +66,12 @@ export function MenuEditor({ menu, costs, ingredients, recipes }: { menu: Menu; 
           <h1 className="text-2xl font-bold">Carta</h1>
           <p className="text-humo">Los cambios se ven al instante en la caja y en la carta QR. El margen sale de la receta y el costo de los insumos.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button className={btn("soft", "md")} onClick={() => setCats(true)}>
             Categorías
+          </button>
+          <button className={btn("soft", "md")} onClick={() => setOpts(true)}>
+            Opciones
           </button>
           <button
             className={btn("primary", "md")}
@@ -71,25 +100,19 @@ export function MenuEditor({ menu, costs, ingredients, recipes }: { menu: Menu; 
                 <span className="text-sm font-normal text-humo">· {c.station === "cocina" ? "cocina" : "barra"}</span>
               </h2>
               {products.length ? (
-                <div className="mt-2 overflow-x-auto rounded-2xl bg-papel ring-1 ring-linea">
-                  <table className="w-full min-w-[760px] text-[15px]">
-                    <thead>
-                      <tr className="border-b border-linea text-left text-[13px] text-humo">
-                        <th className="px-4 py-2 font-semibold">Producto</th>
-                        <th className="px-2 py-2 font-semibold">Precio</th>
-                        <th className="px-2 py-2 font-semibold">Happy hour</th>
-                        <th className="px-2 py-2 font-semibold">Costo y margen</th>
-                        <th className="px-2 py-2 text-center font-semibold">Agotado</th>
-                        <th className="px-2 py-2 text-center font-semibold">Visible</th>
-                        <th className="px-2 py-2 text-center font-semibold">Favorito</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {products.map((p) => (
-                        <Row key={`${p.id}:${p.basePrice}:${p.happyPrice}`} p={p} cost={costs[p.id]} save={save} disabled={pending} onEdit={() => setEditing(p)} />
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="mt-2 rounded-2xl bg-papel text-[15px] ring-1 ring-linea">
+                  <div className={cn(ROW_GRID, "hidden border-b border-linea px-4 py-2 text-[13px] font-semibold text-humo lg:grid")}>
+                    <span className="[grid-area:name]">Producto</span>
+                    <span className="[grid-area:price]">Precio</span>
+                    <span className="[grid-area:happy]">Happy hour</span>
+                    <span className="[grid-area:cost]">Costo y margen</span>
+                    <span className="text-center [grid-area:soldout]">Agotado</span>
+                    <span className="text-center [grid-area:visible]">Visible</span>
+                    <span className="text-center [grid-area:fav]">Favorito</span>
+                  </div>
+                  {products.map((p) => (
+                    <Row key={`${p.id}:${p.basePrice}:${p.happyPrice}`} p={p} cost={costs[p.id]} save={save} disabled={pending} onEdit={() => setEditing(p)} />
+                  ))}
                 </div>
               ) : (
                 <p className="mt-2 rounded-2xl bg-papel px-4 py-3 text-humo ring-1 ring-linea">Sin productos todavía.</p>
@@ -145,6 +168,7 @@ export function MenuEditor({ menu, costs, ingredients, recipes }: { menu: Menu; 
       </Sheet>
 
       <CategoriesSheet open={cats} onClose={() => setCats(false)} categories={menu.categories} counts={countBy(menu.products)} />
+      <OptionsSheet open={opts} onClose={() => setOpts(false)} groups={groups} ingredients={ingredients} />
       {editing ? (
         <ProductSheet
           key={editing.id}
@@ -152,6 +176,8 @@ export function MenuEditor({ menu, costs, ingredients, recipes }: { menu: Menu; 
           categories={menu.categories}
           ingredients={ingredients}
           recipe={recipes[editing.id] ?? []}
+          groups={groups}
+          channels={channels}
           onClose={() => setEditing(null)}
           onSaved={() => (setEditing(null), router.refresh())}
         />
@@ -198,58 +224,79 @@ function Row({
     if (!(await save(p.id, { happyPrice: value }))) setHappy(p.happyPrice ? String(p.happyPrice) : "");
   };
   return (
-    <tr className={cn("border-b border-linea last:border-0", !active && "opacity-50")}>
-      <td className="px-4 py-2">
-        <button className="flex items-center gap-2 text-left font-semibold underline-offset-4 hover:underline" onClick={onEdit}>
-          {p.name} <Pencil size={14} className="text-humo" />
-        </button>
-      </td>
-      <td className="px-2 py-2">
+    <div className={cn(ROW_GRID, "border-b border-linea px-4 py-3 last:border-0 lg:py-2", !active && "opacity-50")}>
+      <button className="flex min-h-10 items-center gap-2 text-left font-semibold underline-offset-4 [grid-area:name] hover:underline" onClick={onEdit}>
+        <span>
+          {p.name}
+          {p.code ? <span className="block text-[12px] font-normal text-humo">{p.code}</span> : null}
+        </span>
+        <Pencil size={14} className="shrink-0 text-humo" />
+      </button>
+      <label className="grid gap-1 [grid-area:price]">
+        <span className="text-[13px] font-semibold text-humo lg:sr-only">Precio</span>
         <input
           inputMode="numeric"
-          className="h-10 w-28 rounded-lg border border-linea-2 px-2 text-right tnum outline-none focus:border-tinto"
+          className="h-11 w-full rounded-lg border border-linea-2 px-2 text-right tnum outline-none focus:border-tinto lg:h-10 lg:w-28"
           value={price}
           onChange={(e) => setPrice(e.target.value.replace(/\D/g, ""))}
           onBlur={savePrice}
           aria-label={`Precio de ${p.name}`}
         />
-      </td>
-      <td className="px-2 py-2">
+      </label>
+      <label className="grid gap-1 [grid-area:happy]">
+        <span className="text-[13px] font-semibold text-humo lg:sr-only">Happy hour</span>
         <input
           inputMode="numeric"
-          className="h-10 w-28 rounded-lg border border-linea-2 px-2 text-right tnum outline-none focus:border-tinto"
+          className="h-11 w-full rounded-lg border border-linea-2 px-2 text-right tnum outline-none focus:border-tinto lg:h-10 lg:w-28"
           value={happy}
           placeholder="—"
           onChange={(e) => setHappy(e.target.value.replace(/\D/g, ""))}
           onBlur={saveHappy}
           aria-label={`Precio de happy hour de ${p.name}`}
         />
-      </td>
-      <td className="px-2 py-2 text-[14px]">
+      </label>
+      <div className="text-[14px] [grid-area:cost]">
         {cost && cost.cost ? (
           <span>
-            {cop(cost.cost)} · <span className={cn("font-semibold", cost.margin < 60 ? "text-cereza" : "text-puerta-2")}>{cost.margin} %</span>
+            <span className="text-humo lg:hidden">Costo </span>
+            {cop(cost.cost)} · <span className="text-humo lg:hidden">margen </span>
+            <span className={cn("font-semibold", cost.margin < 60 ? "text-cereza" : "text-puerta-2")}>{cost.margin} %</span>
           </span>
         ) : (
-          <button className="text-humo underline underline-offset-4" onClick={onEdit}>
+          <button className="min-h-10 text-humo underline underline-offset-4" onClick={onEdit}>
             Sin receta
           </button>
         )}
-      </td>
-      <td className="px-2 py-2 text-center">
-        <input type="checkbox" className="size-5 accent-[var(--color-cereza)]" checked={soldOut} onChange={(e) => (setSoldOut(e.target.checked), save(p.id, { soldOut: e.target.checked }))} aria-label={`${p.name} agotado`} />
-      </td>
-      <td className="px-2 py-2 text-center">
-        <input type="checkbox" className="size-5 accent-[var(--color-balcon)]" checked={active} onChange={(e) => (setActive(e.target.checked), save(p.id, { active: e.target.checked }))} aria-label={`${p.name} visible`} />
-      </td>
-      <td className="px-2 py-2 text-center">
-        <button onClick={() => save(p.id, { favorite: !p.favorite })} disabled={disabled} aria-pressed={p.favorite} aria-label={`${p.name} favorito`} className="inline-flex size-9 items-center justify-center rounded-lg hover:bg-tinto/6">
-          <Star size={18} className={p.favorite ? "fill-fachada text-fachada" : "text-humo"} />
-        </button>
-      </td>
-    </tr>
+      </div>
+      {/* En el celular, interruptores grandes con su nombre; en la tabla, una casilla por columna */}
+      <div className="flex gap-2 [grid-area:flags] lg:contents">
+        <label className={cn(TOGGLE, "has-[:checked]:bg-cereza-soft has-[:checked]:ring-cereza lg:[grid-area:soldout] lg:has-[:checked]:bg-transparent")}>
+          <input type="checkbox" className="size-5 accent-[var(--color-cereza)]" checked={soldOut} onChange={(e) => (setSoldOut(e.target.checked), save(p.id, { soldOut: e.target.checked }))} aria-label={`${p.name} agotado`} />
+          <span className="lg:sr-only">Agotado</span>
+        </label>
+        <label className={cn(TOGGLE, "lg:[grid-area:visible]")}>
+          <input type="checkbox" className="size-5 accent-[var(--color-balcon)]" checked={active} onChange={(e) => (setActive(e.target.checked), save(p.id, { active: e.target.checked }))} aria-label={`${p.name} visible`} />
+          <span className="lg:sr-only">Visible</span>
+        </label>
+      </div>
+      <button
+        onClick={() => save(p.id, { favorite: !p.favorite })}
+        disabled={disabled}
+        aria-pressed={p.favorite}
+        aria-label={`${p.name} favorito`}
+        className="inline-flex size-11 items-center justify-center justify-self-end rounded-lg [grid-area:fav] hover:bg-tinto/6 lg:size-9 lg:justify-self-center"
+      >
+        <Star size={18} className={p.favorite ? "fill-fachada text-fachada" : "text-humo"} />
+      </button>
+    </div>
   );
 }
+
+// Una fila por producto. Desde la tablet horizontal, columnas de tabla; en el celular y la tablet vertical, una tarjeta con todo a la vista
+const ROW_GRID =
+  "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] gap-x-3 gap-y-2 [grid-template-areas:'name_name_fav'_'price_happy_happy'_'cost_cost_cost'_'flags_flags_flags'] lg:grid-cols-[minmax(0,1fr)_7.5rem_7.5rem_10rem_5rem_5rem_4.5rem] lg:items-center lg:gap-y-0 lg:[grid-template-areas:'name_price_happy_cost_soldout_visible_fav']";
+const TOGGLE =
+  "flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl px-3 font-semibold ring-1 ring-linea-2 lg:min-h-10 lg:flex-none lg:rounded-lg lg:px-0 lg:ring-0";
 
 /** Nombre, descripción, categoría, pantalla y receta de un producto. */
 function ProductSheet({
@@ -257,6 +304,8 @@ function ProductSheet({
   categories,
   ingredients,
   recipe,
+  groups,
+  channels,
   onClose,
   onSaved,
 }: {
@@ -264,30 +313,41 @@ function ProductSheet({
   categories: MenuCategory[];
   ingredients: Ingredient[];
   recipe: { ingredientId: string; qty: number }[];
+  groups: OptionGroupView[];
+  channels: { price: PriceChannel[]; visible: SaleChannel[] };
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [pending, start] = useTransition();
-  const [f, setF] = useState({ name: product.name, description: product.description, categoryId: product.categoryId, station: product.station });
-  const [lines, setLines] = useState(recipe.map((r) => ({ ingredientId: r.ingredientId, qty: String(r.qty).replace(".", ",") })));
-  const [pick, setPick] = useState("");
-  const byId = new Map(ingredients.map((i) => [i.id, i]));
-  const cost = lines.reduce((s, l) => s + (parseQty(l.qty) || 0) * (byId.get(l.ingredientId)?.cost ?? 0), 0);
+  const [f, setF] = useState({ name: product.name, description: product.description, categoryId: product.categoryId, station: product.station, code: product.code ?? "" });
+  const [lines, setLines] = useState<RecipeLine[]>(recipe.map((r) => ({ ingredientId: r.ingredientId, qty: String(r.qty).replace(".", ",") })));
+  const [groupIds, setGroupIds] = useState<string[]>(product.groups);
+  const [prices, setPrices] = useState<Record<string, string>>(Object.fromEntries(Object.entries(product.channelPrices).map(([k, v]) => [k, String(v)])));
+  const [hidden, setHidden] = useState<SaleChannel[]>(product.hiddenChannels);
+  const cost = recipeCost(lines, ingredients);
   const base = product.basePrice / (1 + product.taxRate / 100);
   const margin = base ? Math.round(((base - cost) / base) * 100) : 0;
   const recipeChanged = JSON.stringify(lines.map((l) => [l.ingredientId, parseQty(l.qty)])) !== JSON.stringify(recipe.map((r) => [r.ingredientId, r.qty]));
+  const cleanPrices = Object.fromEntries(Object.entries(prices).flatMap(([k, v]) => (parsePesos(v) > 0 ? [[k, parsePesos(v)]] : [])));
+  const pricesChanged = JSON.stringify(Object.entries(cleanPrices).sort()) !== JSON.stringify(Object.entries(product.channelPrices).sort());
+  const hiddenChanged = JSON.stringify([...hidden].sort()) !== JSON.stringify([...product.hiddenChannels].sort());
+  const groupsChanged = JSON.stringify(groupIds) !== JSON.stringify(product.groups);
   const submit = () =>
     start(async () => {
       const bad = lines.find((l) => !(parseQty(l.qty) > 0));
-      if (bad) return void toast(`Escribe cuánto lleva de ${byId.get(bad.ingredientId)?.name ?? "cada insumo"}`, { tone: "error" });
+      if (bad) return void toast(`Escribe cuánto lleva de ${ingredients.find((i) => i.id === bad.ingredientId)?.name ?? "cada insumo"}`, { tone: "error" });
       const patch: Parameters<typeof updateProductAction>[1] = {};
       if (f.name.trim() !== product.name) patch.name = f.name;
       if (f.description.trim() !== product.description) patch.description = f.description;
       if (f.categoryId !== product.categoryId) patch.categoryId = f.categoryId;
       if (f.station !== product.station) patch.station = f.station;
+      if (f.code.trim().toUpperCase() !== (product.code ?? "")) patch.code = f.code.trim() || null;
+      if (pricesChanged) patch.channelPrices = cleanPrices;
+      if (hiddenChanged) patch.hiddenChannels = hidden;
       if (Object.keys(patch).length && !report(await updateProductAction(product.id, patch))) return;
+      if (groupsChanged && !report(await setProductOptionGroupsAction(product.id, groupIds))) return;
       if (recipeChanged && !report(await setRecipeAction(product.id, lines.map((l) => ({ ingredientId: l.ingredientId, qty: parseQty(l.qty) }))))) return;
-      if (!Object.keys(patch).length && !recipeChanged) toast("Sin cambios");
+      if (!Object.keys(patch).length && !recipeChanged && !groupsChanged) toast("Sin cambios");
       onSaved();
     });
   return (
@@ -321,7 +381,11 @@ function ProductSheet({
             ))}
           </select>
         </label>
-        <div>
+        <label className="block">
+          <span className="text-sm font-semibold text-humo">Código (para la DIAN y Rappi)</span>
+          <input className={cn(input, "uppercase")} value={f.code} maxLength={30} placeholder="Ej. SP-001" onChange={(e) => setF({ ...f, code: e.target.value })} />
+        </label>
+        <div className="sm:col-span-2">
           <span className="text-sm font-semibold text-humo">Se prepara en</span>
           <div className="mt-1 grid grid-cols-2 gap-2">
             {(["barra", "cocina"] as const).map((s) => (
@@ -334,54 +398,75 @@ function ProductSheet({
       </div>
 
       <div className="mt-5 rounded-2xl bg-cal p-4">
+        <p className="font-bold">Opciones</p>
+        <p className="text-sm text-humo">Lo que se pregunta al pedirlo, en este orden. Los grupos se crean en Carta → Opciones.</p>
+        {groups.length ? (
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+            {groups.map((g) => {
+              const at = groupIds.indexOf(g.id);
+              return (
+                <li key={g.id}>
+                  <button
+                    onClick={() => setGroupIds(at >= 0 ? groupIds.filter((x) => x !== g.id) : [...groupIds, g.id])}
+                    aria-pressed={at >= 0}
+                    className={cn("flex min-h-12 w-full items-center gap-3 rounded-xl px-3 text-left ring-1", at >= 0 ? "bg-tinto text-cal ring-tinto" : "bg-papel ring-linea-2")}
+                  >
+                    <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-full text-sm font-bold", at >= 0 ? "bg-cal text-tinto" : "ring-1 ring-linea-2")}>{at >= 0 ? at + 1 : ""}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold">{g.name}</span>
+                      <span className={cn("block text-[13px]", at >= 0 ? "text-cal/75" : "text-humo")}>
+                        {describeRule(g.min, g.max)} · {g.options.length} {g.options.length === 1 ? "opción" : "opciones"}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="mt-3 text-sm">Todavía no hay grupos de opciones.</p>
+        )}
+      </div>
+
+      <div className="mt-5 rounded-2xl bg-cal p-4">
+        <p className="font-bold">Dónde se ofrece y a qué precio</p>
+        <p className="text-sm text-humo">Sin precio propio, vale lo mismo que en el local ({cop(product.basePrice)}).</p>
+        <ul className="mt-3 divide-y divide-linea">
+          {channels.visible.map((ch) => {
+            const on = !hidden.includes(ch);
+            const priced = (channels.price as readonly string[]).includes(ch);
+            return (
+              <li key={ch} className="flex flex-wrap items-center gap-3 py-2">
+                <label className="flex min-h-11 min-w-0 flex-1 items-center gap-3 font-semibold">
+                  <input type="checkbox" className="size-5 accent-[var(--color-balcon)]" checked={on} onChange={(e) => setHidden(e.target.checked ? hidden.filter((x) => x !== ch) : [...hidden, ch])} />
+                  {SALE_CHANNEL_LABEL[ch]}
+                </label>
+                {priced ? (
+                  <input
+                    inputMode="numeric"
+                    className="h-11 w-32 rounded-lg border border-linea-2 bg-papel px-2 text-right tnum outline-none focus:border-tinto disabled:opacity-40"
+                    disabled={!on}
+                    placeholder={cop(product.basePrice)}
+                    value={prices[ch] ?? ""}
+                    aria-label={`Precio en ${SALE_CHANNEL_LABEL[ch]}`}
+                    onChange={(e) => setPrices({ ...prices, [ch]: e.target.value.replace(/\D/g, "") })}
+                  />
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      <div className="mt-5 rounded-2xl bg-cal p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <p className="font-bold">Receta</p>
           <p className="text-sm">
             Costo <b className="tnum">{cop(Math.round(cost))}</b> · margen <b className={cn("tnum", margin < 60 ? "text-cereza" : "text-puerta-2")}>{lines.length ? `${margin} %` : "—"}</b>
           </p>
         </div>
-        <p className="text-sm text-humo">Lo que lleva una unidad. Con cada venta se descuenta del inventario.</p>
-        <ul className="mt-3 space-y-2">
-          {lines.map((l, i) => {
-            const ing = byId.get(l.ingredientId);
-            return (
-              <li key={l.ingredientId} className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate">{ing?.name ?? "Insumo borrado"}</span>
-                <input
-                  inputMode="decimal"
-                  className="h-11 w-24 rounded-lg border border-linea-2 bg-papel px-2 text-right tnum outline-none focus:border-tinto"
-                  value={l.qty}
-                  aria-label={`Cantidad de ${ing?.name ?? "insumo"}`}
-                  onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value.replace(/[^\d.,]/g, "") } : x)))}
-                />
-                <span className="w-9 text-sm text-humo">{ing?.unit}</span>
-                <span className="w-20 text-right text-sm tnum text-humo">{cop(Math.round((parseQty(l.qty) || 0) * (ing?.cost ?? 0)))}</span>
-                <button className="flex size-10 items-center justify-center rounded-lg hover:bg-tinto/6" aria-label={`Quitar ${ing?.name ?? "insumo"}`} onClick={() => setLines(lines.filter((_, j) => j !== i))}>
-                  <X size={16} />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        {ingredients.length ? (
-          <div className="mt-3 flex gap-2">
-            <select className="h-11 min-w-0 flex-1 rounded-xl border border-linea-2 bg-papel px-3 outline-none focus:border-tinto" value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Insumo para agregar">
-              <option value="">Agregar insumo…</option>
-              {ingredients
-                .filter((i) => !lines.some((l) => l.ingredientId === i.id))
-                .map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.name} ({i.unit})
-                  </option>
-                ))}
-            </select>
-            <button className={btn("soft", "md")} disabled={!pick} onClick={() => (setLines([...lines, { ingredientId: pick, qty: "" }]), setPick(""))}>
-              <Plus size={16} /> Agregar
-            </button>
-          </div>
-        ) : (
-          <p className="mt-3 text-sm">Primero crea los insumos en Panel → Inventario.</p>
-        )}
+        <p className="mb-3 text-sm text-humo">Lo que lleva una unidad. Con cada venta se descuenta del inventario. Lo que gasta cada opción se pone en la opción.</p>
+        <RecipeLines lines={lines} setLines={setLines} ingredients={ingredients} />
         {lines.length ? (
           <p className="mt-2 text-[13px] text-humo">
             Ej. un capuchino: {fmtQty(18, "g")} de café y {fmtQty(150, "ml")} de leche.

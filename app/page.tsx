@@ -94,7 +94,7 @@ export default async function Landing() {
   const hello = wl ? `Hola, vi la propuesta del sistema para ${brand.name}` : "Hola, quiero probar Ronda en mi local";
   return (
     <div className="bg-cal">
-      <header className={cn("sticky top-0 z-40 backdrop-blur-md", wl ? "bg-balcon/92 text-white" : "border-b border-linea/70 bg-cal/90")}>
+      <header className={cn("sticky top-(--offline-h,0px) z-40 backdrop-blur-md", wl ? "bg-balcon/92 text-white" : "border-b border-linea/70 bg-cal/90")}>
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3.5 sm:px-6">
           <span className="text-2xl font-extrabold tracking-tight [font-stretch:122%]">{wl ? brand.name : "ronda"}</span>
           <nav className={cn("ml-auto hidden gap-6 text-[15px] font-semibold md:flex", wl ? "text-white/75" : "text-tinto-2")}>

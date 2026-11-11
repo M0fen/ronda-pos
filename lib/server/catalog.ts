@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { can, type Staff } from "./auth";
 import { audit, bump } from "./business";
 import { getDb, type Tx } from "./db";
+import { cleanCode } from "../core/channels";
 import { UserError } from "./errors";
 
 /**
@@ -118,6 +119,196 @@ export async function setRecipe(staff: Staff, productId: string, items: { ingred
   });
 }
 
+// ——— Opciones (grupos como "Salsa" o "Adiciones") ———
+
+export interface OptionInput {
+  id?: string | null;
+  name: string;
+  price: number;
+  isDefault?: boolean;
+  code?: string | null;
+  soldOut?: boolean;
+  /** Lo que gasta la opción (ej. "Tocineta" 30 g): se descuenta al enviar y suma al costo */
+  recipe?: { ingredientId: string; qty: number }[];
+}
+
+export interface OptionGroupInput {
+  id?: string | null;
+  name: string;
+  min: number;
+  max: number;
+  options: OptionInput[];
+}
+
+export interface OptionGroupView {
+  id: string;
+  name: string;
+  min: number;
+  max: number;
+  products: number;
+  options: { id: string; name: string; price: number; isDefault: boolean; code: string | null; soldOut: boolean; recipe: { ingredientId: string; qty: number }[] }[];
+}
+
+export async function optionGroups(bizId: string): Promise<OptionGroupView[]> {
+  const db = await getDb();
+  const [groups, options, recipes, uses] = await Promise.all([
+    db.query<{ id: string; name: string; min_select: number; max_select: number }>("select id, name, min_select, max_select from modifier_groups where business_id = $1 order by sort, name", [bizId]),
+    db.query<{ id: string; group_id: string; name: string; price: number; is_default: boolean; code: string | null; sold_out: boolean }>(
+      "select id, group_id, name, price, is_default, code, sold_out from modifiers where business_id = $1 order by sort, name",
+      [bizId],
+    ),
+    db.query<{ modifier_id: string; ingredient_id: string; qty: number }>("select modifier_id, ingredient_id, qty from modifier_recipe_items where business_id = $1", [bizId]),
+    db.query<{ group_id: string; n: number }>(
+      "select pmg.group_id, count(*)::int as n from product_modifier_groups pmg join products p on p.id = pmg.product_id where p.business_id = $1 group by pmg.group_id",
+      [bizId],
+    ),
+  ]);
+  const used = new Map(uses.map((u) => [u.group_id, u.n]));
+  const byGroup = new Map<string, OptionGroupView["options"]>();
+  for (const o of options)
+    byGroup.set(o.group_id, [
+      ...(byGroup.get(o.group_id) ?? []),
+      {
+        id: o.id,
+        name: o.name,
+        price: o.price,
+        isDefault: o.is_default,
+        code: o.code,
+        soldOut: o.sold_out,
+        recipe: recipes.filter((r) => r.modifier_id === o.id).map((r) => ({ ingredientId: r.ingredient_id, qty: Number(r.qty) })),
+      },
+    ]);
+  return groups.map((g) => ({ id: g.id, name: g.name, min: g.min_select, max: g.max_select, products: used.get(g.id) ?? 0, options: byGroup.get(g.id) ?? [] }));
+}
+
+function cleanRecipe(items: unknown, label: string) {
+  const out = new Map<string, number>();
+  for (const it of Array.isArray(items) ? (items as { ingredientId?: unknown; qty?: unknown }[]).slice(0, 20) : []) {
+    if (!isId(it?.ingredientId)) continue;
+    const qty = Math.round(num(it.qty) * 100) / 100;
+    if (!Number.isFinite(qty) || qty <= 0 || qty > 100_000) throw new UserError(`Revisa las cantidades de ${label}`);
+    out.set(it.ingredientId, Math.round(((out.get(it.ingredientId) ?? 0) + qty) * 100) / 100);
+  }
+  return out;
+}
+
+/** Crea o reemplaza un grupo de opciones con todas sus opciones. Las opciones que ya no vienen se borran. */
+export async function saveOptionGroup(staff: Staff, input: OptionGroupInput) {
+  manager(staff);
+  const name = text(input.name, 40);
+  if (name.length < 2) throw new UserError("Escribe el nombre del grupo, ej. Salsa o Adiciones");
+  const min = Math.floor(num(input.min));
+  const max = Math.floor(num(input.max));
+  if (!(min >= 0 && min <= 10)) throw new UserError("El mínimo va de 0 a 10");
+  if (!(max >= 1 && max <= 10)) throw new UserError("El máximo va de 1 a 10");
+  if (min > max) throw new UserError("El mínimo no puede pasar del máximo");
+  const list = Array.isArray(input.options) ? input.options.slice(0, 30) : [];
+  if (!list.length) throw new UserError("Agrega al menos una opción");
+  const options = list.map((o, i) => {
+    const oname = text(o?.name, 40);
+    if (oname.length < 1) throw new UserError(`Escribe el nombre de la opción ${i + 1}`);
+    const price = Math.round(num(o?.price ?? 0));
+    if (!Number.isFinite(price) || price < 0 || price > 1_000_000) throw new UserError(`Revisa el precio de ${oname}`);
+    const code = cleanCode(o?.code);
+    if (code === "") throw new UserError(`El código de ${oname} solo lleva letras, números, punto o guion (hasta 30)`);
+    return { id: o?.id && isId(o.id) ? o.id : null, name: oname, price, isDefault: !!o?.isDefault, code, soldOut: !!o?.soldOut, recipe: cleanRecipe(o?.recipe, oname) };
+  });
+  const names = new Set<string>();
+  for (const o of options) {
+    if (names.has(o.name.toLowerCase())) throw new UserError(`${o.name} está repetida en el grupo`);
+    names.add(o.name.toLowerCase());
+  }
+  const codes = options.map((o) => o.code).filter((c): c is string => !!c);
+  if (new Set(codes).size !== codes.length) throw new UserError("Dos opciones tienen el mismo código");
+  if (options.filter((o) => o.isDefault).length > max) throw new UserError(`Marca como mucho ${max} ${max === 1 ? "opción" : "opciones"} por defecto`);
+  const id = input.id && isId(input.id) ? input.id : null;
+  const db = await getDb();
+  return db.tx(async (tx) => {
+    const dup = await tx.one("select 1 from modifier_groups where business_id = $1 and lower(name) = lower($2) and id::text <> $3", [staff.business_id, name, id ?? ""]);
+    if (dup) throw new UserError("Ya hay un grupo con ese nombre");
+    for (const ingredientId of new Set(options.flatMap((o) => [...o.recipe.keys()]))) {
+      const ok = await tx.one("select 1 from ingredients where id = $1 and business_id = $2", [ingredientId, staff.business_id]);
+      if (!ok) throw new UserError("Un insumo de las opciones ya no existe");
+    }
+    let groupId = id;
+    if (id) {
+      const prev = await tx.one("select 1 from modifier_groups where id = $1 and business_id = $2 for update", [id, staff.business_id]);
+      if (!prev) throw new UserError("Grupo no encontrado");
+      await tx.query("update modifier_groups set name = $2, min_select = $3, max_select = $4 where id = $1", [id, name, min, max]);
+    } else {
+      const row = await tx.one<{ id: string }>(
+        "insert into modifier_groups (business_id, name, min_select, max_select, sort) values ($1, $2, $3, $4, (select coalesce(max(sort), -1) + 1 from modifier_groups where business_id = $1)) returning id",
+        [staff.business_id, name, min, max],
+      );
+      groupId = row!.id;
+    }
+    const keep = options.map((o) => o.id).filter((x): x is string => !!x);
+    // Primero se sueltan los códigos de las que se van, para que otra del grupo pueda tomarlos
+    await tx.query("delete from modifiers where group_id = $1 and id::text <> all($2::text[])", [groupId, keep]);
+    for (const code of codes) {
+      const taken = await tx.one<{ name: string }>("select name from modifiers where business_id = $1 and lower(code) = lower($2) and id::text <> all($3::text[])", [
+        staff.business_id,
+        code,
+        keep,
+      ]);
+      if (taken) throw new UserError(`El código ${code} ya lo tiene la opción ${taken.name}`);
+    }
+    for (const [i, o] of options.entries()) {
+      let optionId = o.id;
+      if (optionId) {
+        const own = await tx.one("select 1 from modifiers where id = $1 and group_id = $2", [optionId, groupId]);
+        if (!own) optionId = null;
+      }
+      if (optionId) {
+        await tx.query("update modifiers set name = $2, price = $3, is_default = $4, code = $5, sold_out = $6, sort = $7 where id = $1", [optionId, o.name, o.price, o.isDefault, o.code, o.soldOut, i]);
+      } else {
+        const row = await tx.one<{ id: string }>(
+          "insert into modifiers (business_id, group_id, name, price, is_default, code, sold_out, sort) values ($1, $2, $3, $4, $5, $6, $7, $8) returning id",
+          [staff.business_id, groupId, o.name, o.price, o.isDefault, o.code, o.soldOut, i],
+        );
+        optionId = row!.id;
+      }
+      await tx.query("delete from modifier_recipe_items where modifier_id = $1", [optionId]);
+      for (const [ingredientId, qty] of o.recipe)
+        await tx.query("insert into modifier_recipe_items (business_id, modifier_id, ingredient_id, qty) values ($1, $2, $3, $4)", [staff.business_id, optionId, ingredientId, qty]);
+    }
+    await audit(tx, staff.business_id, staff.id, "options", { group: name, options: options.length });
+    await bump(tx, staff.business_id);
+    return groupId!;
+  });
+}
+
+export async function deleteOptionGroup(staff: Staff, id: string) {
+  manager(staff);
+  if (!isId(id)) throw new UserError("Grupo no encontrado");
+  const db = await getDb();
+  await db.tx(async (tx) => {
+    const del = await tx.query<{ name: string }>("delete from modifier_groups where id = $1 and business_id = $2 returning name", [id, staff.business_id]);
+    if (!del.length) throw new UserError("Grupo no encontrado");
+    await audit(tx, staff.business_id, staff.id, "options_delete", { group: del[0]!.name });
+    await bump(tx, staff.business_id);
+  });
+}
+
+/** Qué grupos de opciones lleva un producto, en el orden en que se piden. */
+export async function setProductOptionGroups(staff: Staff, productId: string, groupIds: string[]) {
+  manager(staff);
+  if (!isId(productId)) throw new UserError("Producto no encontrado");
+  const ids = [...new Set((Array.isArray(groupIds) ? groupIds : []).filter(isId))].slice(0, 12);
+  const db = await getDb();
+  await db.tx(async (tx) => {
+    const p = await tx.one("select 1 from products where id = $1 and business_id = $2 for update", [productId, staff.business_id]);
+    if (!p) throw new UserError("Producto no encontrado");
+    for (const gid of ids) {
+      const ok = await tx.one("select 1 from modifier_groups where id = $1 and business_id = $2", [gid, staff.business_id]);
+      if (!ok) throw new UserError("Un grupo de opciones ya no existe");
+    }
+    await tx.query("delete from product_modifier_groups where product_id = $1", [productId]);
+    for (const [i, gid] of ids.entries()) await tx.query("insert into product_modifier_groups (product_id, group_id, sort) values ($1, $2, $3)", [productId, gid, i]);
+    await bump(tx, staff.business_id);
+  });
+}
+
 // ——— Insumos ———
 
 export interface IngredientInput {
@@ -162,7 +353,10 @@ export async function saveIngredient(staff: Staff, input: IngredientInput) {
       if (!prev) throw new UserError("Insumo no encontrado");
       if (prev.unit !== input.unit) {
         // Cambiar la unidad dañaría las recetas y el historial: solo si nadie lo usa todavía
-        const used = await tx.one("select 1 from recipe_items where ingredient_id = $1 union all select 1 from stock_movements where ingredient_id = $1 limit 1", [id]);
+        const used = await tx.one(
+          "select 1 from recipe_items where ingredient_id = $1 union all select 1 from modifier_recipe_items where ingredient_id = $1 union all select 1 from stock_movements where ingredient_id = $1 limit 1",
+          [id],
+        );
         if (used) throw new UserError("No se puede cambiar la unidad de un insumo que ya tiene recetas o movimientos");
       }
       await tx.query("update ingredients set name = $2, unit = $3, cost = $4, min_stock = $5, pack_size = $6, pack_label = $7 where id = $1", [id, name, input.unit, cost, minStock, packSize, packLabel]);

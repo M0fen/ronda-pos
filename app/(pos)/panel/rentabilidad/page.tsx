@@ -157,7 +157,7 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
               <p className="mb-3 text-sm text-humo">
                 Promedio de cada turno en las últimas {span} jornadas: lo que queda después de insumos y equipo, y cuánto de lo vendido se va en el equipo.
               </p>
-              <div className="overflow-x-auto">
+              <div className="table-scroll">
                 <table className="w-full min-w-[420px] border-separate border-spacing-1.5 text-left">
                   <thead>
                     <tr className="text-sm text-humo">
@@ -289,7 +289,7 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
         <h2 className="font-bold">Equipo</h2>
         <p className="mb-3 text-sm text-humo">Horas marcadas, lo que costaron con recargos y carga, y lo que vendió cada quien en las cuentas que abrió. Las propinas van aparte: no son salario.</p>
         {r.people.length ? (
-          <div className="overflow-x-auto">
+          <div className="table-scroll">
             <table className="w-full min-w-[720px] text-left">
               <thead>
                 <tr className="border-b border-linea text-sm text-humo">
@@ -358,7 +358,7 @@ export default async function ProfitPage({ searchParams }: { searchParams: Promi
       {span > 1 ? (
         <section className="rounded-3xl bg-papel p-5 ring-1 ring-linea">
           <h2 className="mb-3 font-bold">Día por día</h2>
-          <div className="overflow-x-auto">
+          <div className="table-scroll">
             <table className="w-full min-w-[640px] text-left">
               <thead>
                 <tr className="border-b border-linea text-sm text-humo">

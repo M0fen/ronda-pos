@@ -1,4 +1,8 @@
 import "server-only";
+import { type AccountingDoc, inventoryVariance } from "../core/accounting";
+import { CONSUMIDOR_FINAL } from "../core/dian";
+import type { DishSales } from "../core/menu-engineering";
+import { splitTips, type TipSplit } from "../core/tips";
 import { JORNADA_CUTOFF_HOUR, addDays, jornadaKey } from "../core/time";
 import { totalsFor, type CheckItem } from "./checks";
 import { getDb } from "./db";
@@ -189,4 +193,302 @@ export async function salesOn(bizId: string, dayKey: string, until?: Date) {
     [bizId, from, to, until ? until.toISOString() : null],
   );
   return row?.sales ?? 0;
+}
+
+// ——— Reportes que ayudan a decidir: control, tiempos, ingeniería de menú y propina ———
+
+const CONTROL_ACTIONS = ["void", "courtesy", "courtesy_off", "discount", "payment_removed", "sale_voided", "invoice_reissued"] as const;
+export type ControlAction = "void" | "courtesy" | "discount" | "payment_removed" | "sale_voided" | "invoice_reissued";
+
+export interface ControlEvent {
+  at: string;
+  action: string;
+  who: string;
+  authorizedBy: string | null;
+  reason: string | null;
+  item: string | null;
+  check: number | null;
+  amount: number;
+}
+
+/** Anulaciones, cortesías, descuentos, pagos quitados y ventas anuladas: cuántos, cuánto, quién los pidió, quién autorizó y por qué. */
+export async function controlReport(bizId: string, from: string, to: string) {
+  const db = await getDb();
+  const rows = await db.query<{ action: string; amount: number; created_at: string; detail: Record<string, unknown>; who: string | null }>(
+    `select a.action, a.amount, a.created_at, a.detail, s.name as who
+       from audit_log a left join staff s on s.id = a.staff_id
+      where a.business_id = $1 and a.action = any($2::text[]) and ${JORNADA("a.created_at")} between $3::date and $4::date
+      order by a.created_at desc`,
+    [bizId, [...CONTROL_ACTIONS], from, to],
+  );
+  const totals = new Map<ControlAction, { count: number; amount: number }>();
+  const people = new Map<string, { name: string; count: number; amount: number; byAction: Partial<Record<ControlAction, number>> }>();
+  const authorizers = new Map<string, { count: number; amount: number }>();
+  const reasons = new Map<string, number>();
+  for (const r of rows) {
+    // Quitar una cortesía la descuenta de las cortesías
+    const off = r.action === "courtesy_off";
+    const action = (off ? "courtesy" : r.action) as ControlAction;
+    const sign = off ? -1 : 1;
+    const t = totals.get(action) ?? { count: 0, amount: 0 };
+    t.count += sign;
+    t.amount += sign * Number(r.amount);
+    totals.set(action, t);
+    const who = r.who ?? "Sin nombre";
+    const p = people.get(who) ?? { name: who, count: 0, amount: 0, byAction: {} };
+    p.count += sign;
+    p.amount += sign * Number(r.amount);
+    p.byAction[action] = (p.byAction[action] ?? 0) + sign;
+    people.set(who, p);
+    const by = typeof r.detail.authorizedBy === "string" ? r.detail.authorizedBy : null;
+    if (by && !off) {
+      const a = authorizers.get(by) ?? { count: 0, amount: 0 };
+      a.count++;
+      a.amount += Number(r.amount);
+      authorizers.set(by, a);
+    }
+    const reason = typeof r.detail.reason === "string" ? r.detail.reason.trim() : "";
+    if (reason && !off) reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+  }
+  const events: ControlEvent[] = rows
+    .filter((r) => r.action !== "courtesy_off")
+    .slice(0, 40)
+    .map((r) => ({
+      at: new Date(r.created_at).toISOString(),
+      action: r.action,
+      who: r.who ?? "Sin nombre",
+      authorizedBy: typeof r.detail.authorizedBy === "string" ? r.detail.authorizedBy : null,
+      reason: typeof r.detail.reason === "string" ? r.detail.reason : null,
+      item: typeof r.detail.item === "string" ? r.detail.item : null,
+      check: typeof r.detail.check === "number" ? r.detail.check : null,
+      amount: Number(r.amount),
+    }));
+  return {
+    totals: Object.fromEntries(totals) as Partial<Record<ControlAction, { count: number; amount: number }>>,
+    people: [...people.values()].filter((p) => p.count > 0).sort((a, b) => b.amount - a.amount),
+    authorizers: [...authorizers].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.count - a.count),
+    reasons: [...reasons].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count).slice(0, 8),
+    events,
+  };
+}
+
+/** Cuánto se demora barra y cocina: por estación, por plato y cuántos pasaron del rojo de su estación. */
+export async function kitchenTimes(bizId: string, from: string, to: string, late: { barra: number; cocina: number }) {
+  const db = await getDb();
+  const rows = await db.query<{ station: string; name: string; mins: number; hour: number }>(
+    `select i.station, i.name, extract(epoch from (i.ready_at - i.sent_at)) / 60.0 as mins,
+            extract(hour from ${BOGOTA("i.sent_at")})::int as hour
+       from check_items i
+      where i.business_id = $1 and i.sent_at is not null and i.ready_at is not null and i.ready_at >= i.sent_at
+        and i.status <> 'void' and ${JORNADA("i.sent_at")} between $2::date and $3::date`,
+    [bizId, from, to],
+  );
+  const stations = (["barra", "cocina"] as const).map((st) => {
+    const list = rows.filter((r) => r.station === st).map((r) => Number(r.mins));
+    const sorted = [...list].sort((a, b) => a - b);
+    return {
+      station: st,
+      count: list.length,
+      avg: list.length ? list.reduce((s, x) => s + x, 0) / list.length : 0,
+      p90: sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.9))]! : 0,
+      latePct: list.length ? Math.round((list.filter((x) => x > late[st]).length / list.length) * 100) : 0,
+      lateAt: late[st],
+    };
+  });
+  const byDish = new Map<string, { name: string; station: string; count: number; total: number; late: number }>();
+  for (const r of rows) {
+    const k = `${r.station}|${r.name}`;
+    const d = byDish.get(k) ?? { name: r.name, station: r.station, count: 0, total: 0, late: 0 };
+    d.count++;
+    d.total += Number(r.mins);
+    if (Number(r.mins) > (r.station === "cocina" ? late.cocina : late.barra)) d.late++;
+    byDish.set(k, d);
+  }
+  const dishes = [...byDish.values()]
+    .filter((d) => d.count >= 3)
+    .map((d) => ({ ...d, avg: d.total / d.count }))
+    .sort((a, b) => b.avg - a.avg)
+    .slice(0, 8);
+  const byHour = new Map<number, { count: number; total: number }>();
+  for (const r of rows) {
+    const h = byHour.get(r.hour) ?? { count: 0, total: 0 };
+    h.count++;
+    h.total += Number(r.mins);
+    byHour.set(r.hour, h);
+  }
+  const hours = [...byHour].map(([hour, h]) => ({ hour, count: h.count, avg: h.total / h.count })).sort((a, b) => a.hour - b.hour);
+  return { stations, dishes, hours };
+}
+
+/** Ventas netas, unidades y costo de cada plato en cuentas cerradas: la materia prima de la ingeniería de menú. */
+export async function dishSales(bizId: string, from: string, to: string): Promise<DishSales[]> {
+  const db = await getDb();
+  const rows = await db.query<{ product_id: string; name: string; units: number; net: number; cost: number }>(
+    `with rc as (
+       select r.product_id, sum(r.qty * g.cost)::float as unit_cost
+         from recipe_items r join ingredients g on g.id = r.ingredient_id
+        where r.business_id = $1 group by r.product_id
+     ),
+     mc as (
+       select m.modifier_id::text as id, sum(m.qty * g.cost)::float as unit_cost
+         from modifier_recipe_items m join ingredients g on g.id = m.ingredient_id
+        where m.business_id = $1 group by m.modifier_id
+     ),
+     lines as (
+       select i.product_id, i.name, i.qty, i.tax_rate, c.discount_pct,
+              (i.unit_price + coalesce((select sum((m->>'price')::numeric) from jsonb_array_elements(i.modifiers) m), 0)) * i.qty as gross,
+              (coalesce(rc.unit_cost, 0) + coalesce((select sum(mc.unit_cost) from jsonb_array_elements(i.modifiers) e join mc on mc.id = e->>'id'), 0)) * i.qty as cost
+         from check_items i join checks c on c.id = i.check_id left join rc on rc.product_id = i.product_id
+        where c.business_id = $1 and c.status = 'paid' and ${JORNADA("c.closed_at")} between $2::date and $3::date
+          and i.status <> 'void' and not i.courtesy and i.product_id is not null
+     )
+     select product_id, max(name) as name, sum(qty)::int as units,
+            sum(gross * (100 - discount_pct) / 100.0 / (1 + tax_rate / 100.0))::float as net,
+            sum(cost)::float as cost
+       from lines group by product_id`,
+    [bizId, from, to],
+  );
+  return rows.map((r) => ({ id: r.product_id, name: r.name, units: Number(r.units), net: Math.round(Number(r.net)), cost: Math.round(Number(r.cost)) }));
+}
+
+/** La propina del período y lo que le toca a cada quien según lo que trabajó (marcado con PIN). */
+export async function tipShares(bizId: string, from: string, to: string, rule: { split: TipSplit; roles: string[] }) {
+  const db = await getDb();
+  const [tip, shifts] = await Promise.all([
+    db.one<{ total: number }>(
+      `select coalesce(sum(p.tip), 0)::int as total from payments p
+        where p.business_id = $1 and p.status = 'ok' and ${JORNADA("p.created_at")} between $2::date and $3::date`,
+      [bizId, from, to],
+    ),
+    db.query<{ staff_id: string; name: string; role: string; minutes: number }>(
+      `select s.staff_id, t.name, t.role, sum(extract(epoch from (coalesce(s.clock_out, now()) - s.clock_in)) / 60.0)::float as minutes
+         from shifts s join staff t on t.id = s.staff_id
+        where s.business_id = $1 and ${JORNADA("s.clock_in")} between $2::date and $3::date
+        group by s.staff_id, t.name, t.role`,
+      [bizId, from, to],
+    ),
+  ]);
+  const people = shifts.filter((s) => rule.roles.includes(s.role)).map((s) => ({ id: s.staff_id, name: s.name, minutes: Math.round(Number(s.minutes)) }));
+  return { total: tip?.total ?? 0, shares: splitTips(tip?.total ?? 0, people, rule.split).sort((a, b) => b.amount - a.amount) };
+}
+
+/**
+ * Insumos en el período: lo que debió salir por las recetas de lo vendido, la merma registrada y lo que faltó o sobró
+ * al contar (las diferencias de los conteos). Solo cuenta lo que se movió en esas jornadas.
+ */
+export async function stockVariance(bizId: string, from: string, to: string) {
+  const db = await getDb();
+  const rows = await db.query<{ id: string; name: string; unit: string; cost: number; venta: number; anulacion: number; merma: number; conteo: number; ajuste: number }>(
+    `select i.id, i.name, i.unit, i.cost::float as cost,
+            coalesce(sum(m.delta) filter (where m.reason = 'venta'), 0)::float as venta,
+            coalesce(sum(m.delta) filter (where m.reason = 'anulacion'), 0)::float as anulacion,
+            coalesce(sum(m.delta) filter (where m.reason = 'merma'), 0)::float as merma,
+            coalesce(sum(m.delta) filter (where m.reason = 'conteo'), 0)::float as conteo,
+            coalesce(sum(m.delta) filter (where m.reason = 'ajuste'), 0)::float as ajuste
+       from ingredients i
+       join stock_movements m on m.ingredient_id = i.id and m.business_id = i.business_id
+        and ${JORNADA("m.created_at")} between $2::date and $3::date
+      where i.business_id = $1
+      group by i.id, i.name, i.unit, i.cost`,
+    [bizId, from, to],
+  );
+  return inventoryVariance(rows.map((r) => ({ ...r, cost: Number(r.cost), venta: Number(r.venta), anulacion: Number(r.anulacion), merma: Number(r.merma), conteo: Number(r.conteo), ajuste: Number(r.ajuste) })));
+}
+
+/**
+ * Los documentos de un rango de fechas para el contador: cada tiquete o factura emitido en el rango y cada nota que
+ * anuló algo en el rango (en negativo). Los medios de pago son los del documento (los que quedaron congelados al emitirlo).
+ */
+export async function accountingDocs(bizId: string, from: string, to: string): Promise<AccountingDoc[]> {
+  const db = await getDb();
+  const rows = await db.query<{
+    check_id: string;
+    prefix: string;
+    number: number;
+    doc_type: "pos" | "fe";
+    customer_doc: string | null;
+    customer_name: string | null;
+    subtotal: number;
+    tax: number;
+    tip: number;
+    total: number;
+    dian_status: string;
+    cufe: string;
+    issued: string | Date;
+    voided_at: string | Date | null;
+    void_reason: string | null;
+    credit_note: number | null;
+    note_code: string | null;
+    note_status: string | null;
+    pay: { method: string; amount: number }[] | null;
+  }>(
+    `select i.check_id, i.prefix, i.number, i.doc_type, i.customer_doc, i.customer_name, i.subtotal, i.tax, i.tip, i.total, i.dian_status, i.cufe,
+            coalesce(i.issued_at, i.created_at) as issued, i.voided_at, i.void_reason, i.credit_note, i.note_code, i.note_status,
+            i.payload->'payments' as pay
+       from invoices i
+      where i.business_id = $1
+        and ((coalesce(i.issued_at, i.created_at) >= $2::timestamptz and coalesce(i.issued_at, i.created_at) < $3::timestamptz)
+          or (i.voided_at >= $2::timestamptz and i.voided_at < $3::timestamptz))`,
+    [bizId, from, to],
+  );
+  // Documentos de antes de guardar su contenido: los pagos se leen de la cuenta
+  // (de una venta anulada, los que se quitaron al anularla)
+  const missing = rows.filter((r) => !Array.isArray(r.pay));
+  const byCheck = new Map<string, { method: string; amount: number }[]>();
+  if (missing.length) {
+    const voided = new Set(missing.filter((r) => r.voided_at).map((r) => r.check_id));
+    for (const p of await db.query<{ check_id: string; method: string; amount: number; status: string }>(
+      "select check_id, method, (amount + tip)::int as amount, status from payments where check_id = any($1::uuid[]) and status in ('ok', 'removed') order by created_at",
+      [missing.map((r) => r.check_id)],
+    ))
+      if (p.status === "ok" || voided.has(p.check_id)) byCheck.set(p.check_id, [...(byCheck.get(p.check_id) ?? []), { method: p.method, amount: Number(p.amount) }]);
+  }
+  const iso = (d: string | Date) => (d instanceof Date ? d : new Date(d)).toISOString();
+  const lo = new Date(from).getTime();
+  const hi = new Date(to).getTime();
+  const docs: AccountingDoc[] = [];
+  for (const r of rows) {
+    const number = `${r.prefix}${r.number}`;
+    const customer = r.customer_name || "Consumidor final";
+    const customerDoc = r.customer_doc || CONSUMIDOR_FINAL;
+    const issued = iso(r.issued);
+    if (new Date(issued).getTime() >= lo && new Date(issued).getTime() < hi)
+      docs.push({
+        at: issued,
+        kind: r.doc_type,
+        number,
+        customer,
+        customerDoc,
+        base: Number(r.subtotal),
+        tax: Number(r.tax),
+        tip: Number(r.tip),
+        total: Number(r.total),
+        payments: (Array.isArray(r.pay) ? r.pay : (byCheck.get(r.check_id) ?? [])).map((p) => ({ method: p.method, amount: Number(p.amount) })),
+        dian: r.dian_status,
+        code: r.cufe,
+        ref: "",
+        reason: "",
+      });
+    if (r.voided_at) {
+      const at = iso(r.voided_at);
+      if (new Date(at).getTime() >= lo && new Date(at).getTime() < hi)
+        docs.push({
+          at,
+          kind: r.doc_type === "fe" ? "credito" : "ajuste",
+          number: `${r.doc_type === "fe" ? "NC" : "NA"}${r.prefix}${r.credit_note ?? ""}`,
+          customer,
+          customerDoc,
+          base: -Number(r.subtotal),
+          tax: -Number(r.tax),
+          tip: -Number(r.tip),
+          total: -Number(r.total),
+          payments: [],
+          dian: r.note_status ?? r.dian_status,
+          code: r.note_code ?? "",
+          ref: number,
+          reason: r.void_reason ?? "",
+        });
+    }
+  }
+  return docs.sort((a, b) => a.at.localeCompare(b.at));
 }

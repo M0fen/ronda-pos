@@ -48,6 +48,7 @@ import {
 } from "@/lib/server/payments";
 import { approveRequest, rejectRequest } from "@/lib/server/qr";
 import { cancelDelivery, createDelivery, dispatchDelivery, packDelivery } from "@/lib/server/delivery";
+import { scheduleDian, sendPendingDocuments } from "@/lib/server/dian";
 
 /** Versión del local: si cambia, las pantallas se refrescan. -1: la sesión terminó. De paso renueva la sesión mientras se usa. */
 export async function pulseAction() {
@@ -163,18 +164,24 @@ export async function changePaymentMethodAction(paymentId: string, input: { meth
 
 export async function reissueInvoiceAction(checkId: string, input: { invoice: CloseInput["invoice"]; auth?: AuthInput | null }) {
   const staff = await requireStaff();
-  return safely(() => reissueInvoice(staff, checkId, input), "Factura anulada con nota crédito y emitida de nuevo");
+  const result = await safely(() => reissueInvoice(staff, checkId, input), "Documento anulado con su nota y emitido de nuevo");
+  scheduleDian(staff.business_id);
+  return result;
 }
 
 export async function voidSaleAction(checkId: string, input: { reason: string; auth?: AuthInput | null }) {
   const staff = await requireStaff();
-  return safely(() => voidSale(staff, checkId, input), "Venta anulada con nota crédito");
+  const result = await safely(() => voidSale(staff, checkId, input), "Venta anulada con su nota");
+  scheduleDian(staff.business_id);
+  return result;
 }
 
 export async function closeCheckAction(checkId: string, input: CloseInput) {
   const staff = await requireStaff();
   const result = await safely(() => closeCheck(staff, checkId, input));
   if (result.ok) revalidatePath("/salon");
+  // El documento sale a la DIAN después de responder: el cobro no espera al proveedor
+  scheduleDian(staff.business_id);
   return result;
 }
 
@@ -260,7 +267,9 @@ export async function packDeliveryAction(checkId: string, checked: string[]) {
 
 export async function dispatchDeliveryAction(checkId: string) {
   const staff = await requireStaff();
-  return safely(() => dispatchDelivery(staff, checkId), "Entregado al domiciliario");
+  const result = await safely(() => dispatchDelivery(staff, checkId), "Entregado al domiciliario");
+  scheduleDian(staff.business_id);
+  return result;
 }
 
 export async function cancelDeliveryAction(checkId: string, input: { reason: string; auth?: AuthInput | null }) {
@@ -268,3 +277,13 @@ export async function cancelDeliveryAction(checkId: string, input: { reason: str
   return safely(() => cancelDelivery(staff, checkId, input), "Pedido cancelado");
 }
 
+
+/** Reintentar ya el envío de lo pendiente a la DIAN (el panel lo ofrece cuando algo no ha salido). */
+export async function retryDianAction() {
+  const staff = await requireStaff(["owner", "admin", "cashier"]);
+  return safely(async () => {
+    const r = await sendPendingDocuments(staff.business_id, { limit: 50 });
+    if (r.failed && !r.sent) throw new UserError("El proveedor no responde: se vuelve a intentar solo en unos minutos");
+    return r;
+  }, "Envío a la DIAN revisado");
+}

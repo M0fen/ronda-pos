@@ -57,10 +57,10 @@ export default async function ReceiptPage({ params, searchParams }: { params: Pr
   return (
     <main className="min-h-dvh bg-cal px-4 py-6">
       {sp.nuevo ? (
-        <div className="no-print mx-auto mb-4 max-w-[340px] rounded-2xl bg-puerta px-4 py-3 text-center font-semibold text-white">Cuenta cerrada y factura emitida</div>
+        <div className="no-print mx-auto mb-4 max-w-[340px] rounded-2xl bg-puerta px-4 py-3 text-center font-semibold text-white">Cuenta cerrada y {receipt.invoice.doc_type === "fe" ? "factura electrónica emitida" : "tiquete POS electrónico emitido"}</div>
       ) : null}
       <Actions back={back} whatsapp={receipt.invoice.voided_at ? undefined : `https://wa.me/?text=${encodeURIComponent(text)}`} />
-      <Receipt business={receipt.business} check={receipt.check} invoice={receipt.invoice} qr={receipt.qr} mode="factura" />
+      <Receipt business={receipt.business} check={receipt.check} invoice={receipt.invoice} qr={receipt.qr} mode="factura" codes={receipt.codes} />
       {can.closeCash(staff) && receipt.check.status === "paid" ? (
         <ReceiptActions
           checkId={receipt.check.id}

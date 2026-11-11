@@ -1,7 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireStaff } from "@/lib/server/auth";
+import { accountingCsv, monthBounds } from "@/lib/core/accounting";
+import { can, requireStaff } from "@/lib/server/auth";
+import { getBusiness } from "@/lib/server/business";
+import { accountingDocs } from "@/lib/server/reports";
+import { METHOD_LABEL } from "@/lib/settings";
 import { safely, UserError } from "@/lib/server/errors";
 import { stockMove } from "@/lib/server/inventory";
 import { closeShift } from "@/lib/server/labor";
@@ -9,14 +13,18 @@ import { createEnrollCode, revokeDevice } from "@/lib/server/devices";
 import { canResetDemo, resetDemo } from "@/lib/server/db";
 import {
   deleteCategory,
+  deleteOptionGroup,
   deleteZone,
+  type OptionGroupInput,
   type IngredientInput,
   moveCategory,
   placeTable,
   removeTable,
   saveCategory,
   saveIngredient,
+  saveOptionGroup,
   saveTable,
+  setProductOptionGroups,
   saveZone,
   setRecipe,
   type TableInput,
@@ -24,10 +32,7 @@ import {
 import { applyTaxToMenu, createProduct, deleteCustomer, saveSettings, saveStaff, unlockStaff, updateProduct, withdrawConsent } from "@/lib/server/panel";
 import type { Settings } from "@/lib/settings";
 
-export async function updateProductAction(
-  productId: string,
-  patch: { name?: string; price?: number; happyPrice?: number | null; soldOut?: boolean; active?: boolean; favorite?: boolean; description?: string; categoryId?: string; station?: string },
-) {
+export async function updateProductAction(productId: string, patch: Parameters<typeof updateProduct>[2]) {
   const staff = await requireStaff();
   return safely(() => updateProduct(staff, productId, patch), "Guardado");
 }
@@ -116,6 +121,21 @@ export async function deleteCategoryAction(id: string) {
   return safely(() => deleteCategory(staff, String(id)), "Categoría borrada");
 }
 
+export async function saveOptionGroupAction(input: OptionGroupInput) {
+  const staff = await requireStaff();
+  return safely(() => saveOptionGroup(staff, input), "Opciones guardadas");
+}
+
+export async function deleteOptionGroupAction(id: string) {
+  const staff = await requireStaff();
+  return safely(() => deleteOptionGroup(staff, id), "Grupo borrado");
+}
+
+export async function setProductOptionGroupsAction(productId: string, groupIds: string[]) {
+  const staff = await requireStaff();
+  return safely(() => setProductOptionGroups(staff, productId, groupIds), "Guardado");
+}
+
 export async function setRecipeAction(productId: string, items: { ingredientId: string; qty: number }[]) {
   const staff = await requireStaff();
   return safely(() => setRecipe(staff, String(productId), items), "Receta guardada");
@@ -149,4 +169,24 @@ export async function placeTableAction(id: string, pos: { x: number; y: number }
 export async function removeTableAction(id: string) {
   const staff = await requireStaff();
   return safely(() => removeTable(staff, String(id)), "Mesa quitada");
+}
+
+/** CSV del mes para el contador: tiquetes, facturas y notas con base, impuesto, propina, medios de pago y estado ante la DIAN. */
+export async function accountingExportAction(month: string) {
+  const staff = await requireStaff();
+  return safely(async () => {
+    if (!can.manage(staff)) throw new UserError("Solo el dueño o la administración exportan para el contador");
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new UserError("Elige un mes");
+    const { from, to } = monthBounds(month);
+    const [biz, docs] = await Promise.all([getBusiness(staff.business_id), accountingDocs(staff.business_id, from, to)]);
+    const slug = (t: string) =>
+      t
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+    const name = [biz.name, biz.sede].filter(Boolean).map((t) => slug(t!)).join("-");
+    return { filename: `contador-${name}-${month}.csv`, csv: accountingCsv(docs, METHOD_LABEL), count: docs.length };
+  });
 }

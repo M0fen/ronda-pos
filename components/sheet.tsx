@@ -51,7 +51,7 @@ export function Sheet({
   if (!shown) return null;
   return (
     <div
-      className={cn("fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-6", closing && "sheet-closing pointer-events-none")}
+      className={cn("fixed inset-x-0 top-(--offline-h,0px) bottom-0 z-[60] flex items-end justify-center sm:items-center sm:p-6", closing && "sheet-closing pointer-events-none")}
       role="dialog"
       aria-modal="true"
       aria-label={typeof view.title === "string" ? view.title : undefined}
