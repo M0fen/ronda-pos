@@ -46,3 +46,6 @@ next-env.d.ts
 
 # base de la demo generada en el build
 /lib/generated/
+
+# notas locales de la noche (diagnóstico completo): no se suben
+/.noche/

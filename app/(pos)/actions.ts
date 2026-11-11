@@ -26,6 +26,7 @@ import {
   type DraftPatch,
   type MoveTarget,
 } from "@/lib/server/checks";
+import { noteScreen } from "@/lib/server/db";
 import { UserError } from "@/lib/server/errors";
 import { safely } from "@/lib/server/errors";
 import type { ChosenItem } from "@/lib/server/menu";
@@ -38,6 +39,7 @@ import {
   closeCheck,
   fixCashCount,
   openCash,
+  payAndClose,
   redeemReward,
   registerPayment,
   reissueInvoice,
@@ -45,6 +47,7 @@ import {
   reviewClientPayment,
   voidSale,
   type CloseInput,
+  type PaymentInput,
 } from "@/lib/server/payments";
 import { approveRequest, rejectRequest } from "@/lib/server/qr";
 import { cancelDelivery, createDelivery, dispatchDelivery, packDelivery } from "@/lib/server/delivery";
@@ -53,6 +56,8 @@ import { cancelDelivery, createDelivery, dispatchDelivery, packDelivery } from "
 export async function pulseAction() {
   const staff = await getStaff();
   if (!staff) return -1;
+  // Una pantalla abierta con sesión cuenta como uso: la demo en memoria no se resiembra a mitad de una presentación
+  noteScreen();
   await renewSession().catch(() => {});
   return readPulse(staff.business_id);
 }
@@ -141,9 +146,18 @@ export async function discardCheckAction(checkId: string) {
   return safely(() => discardCheck(staff, checkId), "Cuenta descartada");
 }
 
-export async function paymentAction(checkId: string, input: { method: string; amount: number; tip: number; received?: number | null; reference?: string; part?: string; confirmTip?: boolean }) {
+/** Registra un pago. Con `attemptKey`, el mismo intento reenviado (la respuesta se perdió) no se cobra dos veces. */
+export async function paymentAction(checkId: string, input: PaymentInput) {
   const staff = await requireStaff();
   return safely(() => registerPayment(staff, checkId, input));
+}
+
+/** «Efectivo exacto y cerrar»: el pago y el cierre en un solo paso y una sola transacción. */
+export async function payAndCloseAction(checkId: string, input: { payment: PaymentInput; close: CloseInput }) {
+  const staff = await requireStaff();
+  const result = await safely(() => payAndClose(staff, checkId, input));
+  if (result.ok) revalidatePath("/salon");
+  return result;
 }
 
 export async function reviewClientPaymentAction(paymentId: string, approve: boolean) {

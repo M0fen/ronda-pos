@@ -1,5 +1,5 @@
 import "server-only";
-import { stampsEarned } from "../core/pricing";
+import { stampsEarned, unitWithModifiers } from "../core/pricing";
 import { bogotaParts } from "../core/time";
 import { cop } from "../money";
 import { fakeCufe, token } from "../seed";
@@ -7,7 +7,7 @@ import { METHOD_LABEL } from "../settings";
 import { normalizePhone } from "../utils";
 import { can, requireAuth, verifyAuthorizer, type AuthInput, type Staff } from "./auth";
 import { audit, bump, getBusiness, nextNumber, type Business } from "./business";
-import { assertNotOverpaid, isClosed, loadCheck, promoteSplit } from "./checks";
+import { assertNotOverpaid, isClosed, loadCheck, promoteSplit, type CheckView } from "./checks";
 import { getDb, type Tx } from "./db";
 import { UserError } from "./errors";
 
@@ -17,12 +17,17 @@ export type Method = (typeof METHODS)[number];
 /** Tope de cada entrada o salida de efectivo */
 const CASH_MOVE_MAX = 5_000_000;
 
+/**
+ * La caja abierta de la sede. Dentro de una transacción la deja con candado compartido: si en ese instante alguien la
+ * está cerrando, el cobro espera a que termine y ya no la encuentra abierta ("Abre la caja para cobrar"), en vez de
+ * entrar a una caja cerrada y quedar por fuera del esperado. Varios cobros a la vez no se estorban entre sí.
+ */
 export async function currentCashSession(bizId: string, tx?: Pick<Tx, "one">) {
   const db = tx ?? (await getDb());
   return db.one<{ id: string; opened_at: string; opening: number; opened_by: string | null; opener: string | null }>(
     `select cs.id, cs.opened_at, cs.opening, cs.opened_by, s.name as opener
        from cash_sessions cs left join staff s on s.id = cs.opened_by
-      where cs.business_id = $1 and cs.closed_at is null order by cs.opened_at desc limit 1`,
+      where cs.business_id = $1 and cs.closed_at is null order by cs.opened_at desc limit 1${tx ? " for share of cs" : ""}`,
     [bizId],
   );
 }
@@ -41,11 +46,39 @@ function checkReference(method: string, reference: string) {
   }
 }
 
-export async function registerPayment(
-  staff: Staff,
-  checkId: string,
-  input: { method: string; amount: number; tip: number; received?: number | null; reference?: string; part?: string; confirmTip?: boolean },
-) {
+export interface PaymentInput {
+  method: string;
+  amount: number;
+  tip: number;
+  received?: number | null;
+  reference?: string;
+  part?: string;
+  confirmTip?: boolean;
+  /**
+   * Llave del intento, la pone la pantalla (o la cola sin conexión). Si el mismo intento llega dos veces porque la
+   * respuesta se perdió, el pago queda una sola vez y se responde lo mismo.
+   */
+  attemptKey?: string | null;
+}
+
+export interface PaymentResult {
+  change: number;
+  due: number;
+  /** Ese intento ya había quedado registrado: esta vez no se cobró nada */
+  repeated: boolean;
+}
+
+type PaymentContext = { biz: Business; method: Method; amount: number; tip: number; key: string | null };
+
+/** Sin llave se cobra como siempre (sin protección contra el reintento); una llave que llega mal no se adivina. */
+function attemptKeyOf(raw: unknown): string | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  if (typeof raw !== "string" || !/^[A-Za-z0-9_-]{8,64}$/.test(raw)) throw new UserError("No se pudo identificar este intento de pago. Recarga la pantalla y vuelve a intentarlo.");
+  return raw;
+}
+
+/** Lo que se revisa antes de abrir la transacción: permiso, método activo, valores y la llave del intento. */
+async function paymentContext(staff: Staff, input: PaymentInput): Promise<PaymentContext> {
   if (!can.charge(staff)) throw new UserError("Tu usuario no puede cobrar");
   const method = input.method as Method;
   if (!METHODS.includes(method)) throw new UserError("Elige cómo paga");
@@ -54,35 +87,107 @@ export async function registerPayment(
   const amount = Math.round(Number(input.amount) || 0);
   const tip = Math.max(0, Math.round(Number(input.tip) || 0));
   if (amount <= 0) throw new UserError("El valor debe ser mayor a cero");
+  return { biz, method, amount, tip, key: attemptKeyOf(input.attemptKey) };
+}
+
+/** La parte de la cuenta que paga ("Parte 2 de 3", "Persona 1"), como se guarda. */
+const partOf = (input: PaymentInput) => (input.part ?? "").slice(0, 30);
+
+/**
+ * ¿Este intento ya quedó? Pasa cuando el pago se guardó pero la respuesta no llegó y la pantalla lo reintenta.
+ * Va con la cuenta bloqueada y antes de cualquier otra revisión: aunque la cuenta ya esté paga o cerrada, se responde lo que quedó.
+ * Si con la misma llave llega otro pago (otra parte, otro valor u otro medio), no se da por hecho: se avisa cuál fue el que quedó.
+ */
+async function priorAttempt(tx: Tx, staff: Staff, check: CheckView, p: PaymentContext, input: PaymentInput): Promise<PaymentResult | null> {
+  if (!p.key) return null;
+  const prior = await tx.one<{ check_id: string; method: string; amount: number; tip: number; received: number | null; part: string; status: string }>(
+    "select check_id, method, amount, tip, received, part, status from payments where business_id = $1 and attempt_key = $2",
+    [staff.business_id, p.key],
+  );
+  if (!prior) return null;
+  if (prior.check_id !== check.id) throw new UserError("Ese intento de pago ya se usó en otra cuenta. Recarga la pantalla y vuelve a intentarlo.");
+  if (prior.status !== "ok") throw new UserError("Ese pago ya se había registrado y después se quitó. Si hay que cobrarlo otra vez, regístralo de nuevo.");
+  if (prior.method !== p.method || prior.amount !== p.amount || prior.tip !== p.tip || prior.part !== partOf(input)) {
+    const what = `${METHOD_LABEL[prior.method] ?? prior.method} por ${cop(prior.amount + prior.tip)}${prior.part ? ` (${prior.part})` : ""}`;
+    throw new UserError(`El intento anterior sí había quedado registrado: ${what}. Revisa los pagos de la cuenta y registra de nuevo lo que falte.`);
+  }
+  return { change: prior.received !== null ? Math.max(0, prior.received - prior.amount - prior.tip) : 0, due: check.due, repeated: true };
+}
+
+/**
+ * El pago dentro de una transacción ya abierta y con la cuenta bloqueada. Lo usan registrar un pago y «efectivo exacto y cerrar».
+ * No avisa el cambio (bump): eso lo hace quien llama, al final de su transacción. El pulso es una sola fila por sede y, si se
+ * toma a la mitad, dos cobros que cierran a la vez se pueden bloquear entre sí con Postgres real.
+ */
+async function registerPaymentTx(tx: Tx, staff: Staff, check: CheckView, p: PaymentContext, input: PaymentInput): Promise<PaymentResult> {
+  const { method, amount, tip } = p;
+  if (isClosed(check.status)) throw new UserError("Esta cuenta ya está cerrada");
+  if (check.items.some((i) => i.status === "draft")) throw new UserError("Hay productos sin enviar: envíalos o quítalos antes de cobrar");
+  if (check.pendingPayments.length) throw new UserError("El cliente reportó un pago desde la mesa: confírmalo o recházalo antes de cobrar");
+  if (amount > check.due) throw new UserError(`Solo falta pagar ${cop(check.due)}`);
+  if (tip > Math.round(check.totals.total * 0.2) && !input.confirmTip) {
+    throw new UserError(`La propina de ${cop(tip)} es más del 20 % de la cuenta. Confírmala con el cliente.`, { tipConfirm: "1" });
+  }
+  if (tip > Math.max(check.totals.total, 200_000)) throw new UserError("Revisa la propina: es mayor que la cuenta");
+  const session = await currentCashSession(staff.business_id, tx);
+  if (!session) throw new UserError("Abre la caja para cobrar: así cada pago queda en un cierre");
+  let received: number | null = null;
+  if (method === "efectivo") {
+    received = Math.round(Number(input.received ?? amount + tip) || 0);
+    if (received < amount + tip) throw new UserError("El efectivo recibido no alcanza");
+    if (received > amount + tip + 1_000_000) throw new UserError("Revisa el efectivo recibido");
+  }
+  const reference = (input.reference ?? "").trim().slice(0, 40);
+  checkReference(method, reference);
+  // La llave es única por sede. Con la cuenta bloqueada, el mismo intento en la misma cuenta ya se habría encontrado arriba:
+  // si aquí choca es porque esa llave la tiene un pago de otra cuenta
+  const row = await tx.one<{ id: string }>(
+    `insert into payments (business_id, check_id, method, amount, tip, received, reference, part, created_by, cash_session_id, attempt_key)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+     on conflict (business_id, attempt_key) where attempt_key is not null do nothing returning id`,
+    [staff.business_id, check.id, method, amount, tip, received, reference, partOf(input), staff.id, session.id, p.key],
+  );
+  if (!row) throw new UserError("Ese intento de pago ya se usó en otra cuenta. Recarga la pantalla y vuelve a intentarlo.");
+  await tx.query("update checks set status = 'bill', tip_answer = coalesce(tip_answer, $2), updated_at = now() where id = $1", [check.id, tip > 0 ? "si" : null]);
+  return { change: received !== null ? received - amount - tip : 0, due: check.due - amount, repeated: false };
+}
+
+export async function registerPayment(staff: Staff, checkId: string, input: PaymentInput): Promise<PaymentResult> {
+  const p = await paymentContext(staff, input);
   const db = await getDb();
   return db.tx(async (tx) => {
     const check = await lockCheck(tx, staff.business_id, checkId);
-    if (isClosed(check.status)) throw new UserError("Esta cuenta ya está cerrada");
-    if (check.items.some((i) => i.status === "draft")) throw new UserError("Hay productos sin enviar: envíalos o quítalos antes de cobrar");
-    if (check.pendingPayments.length) throw new UserError("El cliente reportó un pago desde la mesa: confírmalo o recházalo antes de cobrar");
-    if (amount > check.due) throw new UserError(`Solo falta pagar ${cop(check.due)}`);
-    if (tip > Math.round(check.totals.total * 0.2) && !input.confirmTip) {
-      throw new UserError(`La propina de ${cop(tip)} es más del 20 % de la cuenta. Confírmala con el cliente.`, { tipConfirm: "1" });
-    }
-    if (tip > Math.max(check.totals.total, 200_000)) throw new UserError("Revisa la propina: es mayor que la cuenta");
-    const session = await currentCashSession(staff.business_id, tx);
-    if (!session) throw new UserError("Abre la caja para cobrar: así cada pago queda en un cierre");
-    let received: number | null = null;
-    if (method === "efectivo") {
-      received = Math.round(Number(input.received ?? amount + tip) || 0);
-      if (received < amount + tip) throw new UserError("El efectivo recibido no alcanza");
-      if (received > amount + tip + 1_000_000) throw new UserError("Revisa el efectivo recibido");
-    }
-    const reference = (input.reference ?? "").trim().slice(0, 40);
-    checkReference(method, reference);
-    await tx.query(
-      `insert into payments (business_id, check_id, method, amount, tip, received, reference, part, created_by, cash_session_id)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [staff.business_id, checkId, method, amount, tip, received, reference, (input.part ?? "").slice(0, 30), staff.id, session.id],
-    );
-    await tx.query("update checks set status = 'bill', tip_answer = coalesce(tip_answer, $2), updated_at = now() where id = $1", [checkId, tip > 0 ? "si" : null]);
+    const prior = await priorAttempt(tx, staff, check, p, input);
+    if (prior) return prior;
+    const paid = await registerPaymentTx(tx, staff, check, p, input);
     await bump(tx, staff.business_id);
-    return { change: received !== null ? received - amount - tip : 0, due: check.due - amount };
+    return paid;
+  });
+}
+
+/**
+ * «Efectivo exacto y cerrar» (o cualquier pago que completa la cuenta) en un solo paso: el pago y el cierre van en la misma
+ * transacción, así que quedan los dos o ninguno. Con la llave del intento, si la respuesta se pierde y la pantalla
+ * reintenta, devuelve lo que ya quedó (la misma factura) sin cobrar ni facturar otra vez.
+ */
+export async function payAndClose(staff: Staff, checkId: string, input: { payment: PaymentInput; close: CloseInput }) {
+  const p = await paymentContext(staff, input.payment);
+  const db = await getDb();
+  return db.tx(async (tx) => {
+    const check = await lockCheck(tx, staff.business_id, checkId);
+    const prior = await priorAttempt(tx, staff, check, p, input.payment);
+    if (prior) {
+      // Si ese intento también alcanzó a cerrar la cuenta, se devuelve su factura; si solo quedó el pago, la pantalla muestra cómo va
+      const closed = check.status === "paid";
+      const earned = closed ? await tx.one<{ n: number }>("select coalesce(sum(delta), 0)::int as n from loyalty_ledger where check_id = $1 and reason = 'Visita'", [checkId]) : null;
+      return { ...prior, closed, invoiceId: closed ? (check.invoice?.id ?? null) : null, stamps: earned?.n ?? 0 };
+    }
+    const paid = await registerPaymentTx(tx, staff, check, p, input.payment);
+    const done = await closeCheckTx(tx, staff, p.biz, checkId, input.close);
+    // El aviso del cambio va de último (closeCheckTx ya lo hace al terminar; aquí queda asegurado): el pulso de la sede
+    // nunca se toma a la mitad de la transacción
+    await bump(tx, staff.business_id);
+    return { ...paid, closed: true, ...done };
   });
 }
 
@@ -245,7 +350,10 @@ export async function closeCheckTx(tx: Tx, staff: Staff, biz: Business, checkId:
   return { invoiceId, stamps };
 }
 
-/** Canjea el premio de sellos: la bebida más cara que entre en el tope queda como cortesía. */
+/**
+ * Canjea el premio de sellos: la bebida más cara que entre en el tope queda como cortesía. El tope se compara con lo que
+ * vale la bebida con sus adiciones, porque la cortesía regala la línea completa (una cerveza michelada vale cerveza más michelada).
+ */
 export async function redeemReward(staff: Staff, checkId: string) {
   const biz = await getBusiness(staff.business_id);
   const db = await getDb();
@@ -254,10 +362,11 @@ export async function redeemReward(staff: Staff, checkId: string) {
     if (isClosed(check.status)) throw new UserError("Esta cuenta ya está cerrada");
     if (!check.customer) throw new UserError("Primero agrega el cliente a la cuenta");
     if (check.customer.stamps < biz.settings.loyalty.goal) throw new UserError(`Le faltan ${biz.settings.loyalty.goal - check.customer.stamps} sellos`);
+    const worth = (i: { unit_price: number; modifiers: { name: string; price: number }[] }) => unitWithModifiers({ unitPrice: i.unit_price, modifiers: i.modifiers });
     const eligible = check.items
-      .filter((i) => i.status !== "void" && i.status !== "draft" && !i.courtesy && i.station === "barra" && i.unit_price <= biz.settings.loyalty.rewardMax)
-      .sort((a, b) => b.unit_price - a.unit_price)[0];
-    if (!eligible) throw new UserError(`No hay una bebida enviada de hasta ${cop(biz.settings.loyalty.rewardMax)} en la cuenta`);
+      .filter((i) => i.status !== "void" && i.status !== "draft" && !i.courtesy && i.station === "barra" && worth(i) <= biz.settings.loyalty.rewardMax)
+      .sort((a, b) => worth(b) - worth(a))[0];
+    if (!eligible) throw new UserError(`No hay una bebida enviada de hasta ${cop(biz.settings.loyalty.rewardMax)} (con sus adiciones) en la cuenta`);
     if (eligible.qty > 1) {
       await tx.query("update check_items set qty = qty - 1 where id = $1", [eligible.id]);
       await tx.query(
@@ -276,7 +385,7 @@ export async function redeemReward(staff: Staff, checkId: string) {
       -biz.settings.loyalty.goal,
       checkId,
     ]);
-    await audit(tx, staff.business_id, staff.id, "reward", { item: eligible.name, customer: check.customer.name, check: check.number }, eligible.unit_price);
+    await audit(tx, staff.business_id, staff.id, "reward", { item: eligible.name, customer: check.customer.name, check: check.number }, worth(eligible));
     await bump(tx, staff.business_id);
   });
 }

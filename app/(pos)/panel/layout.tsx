@@ -21,6 +21,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
           { href: "/panel/equipo", label: "Equipo" },
           { href: "/panel/qr", label: "QR de mesas" },
           { href: "/panel/ajustes", label: "Ajustes" },
+          { href: "/panel/exportar", label: "Contador" },
         ]
       : []),
   ];

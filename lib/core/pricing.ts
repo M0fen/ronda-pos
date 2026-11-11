@@ -103,6 +103,35 @@ export function splitEqual(total: number, parts: number) {
   return Array.from({ length: n }, (_, i) => exact + (i < rem ? 1 : 0));
 }
 
+/**
+ * Reparte un valor en proporción a unos pesos: la propina según lo que consumió cada quien en "Cada quien lo suyo".
+ * Cada parte se redondea a `step` ($100) y la última con peso cuadra el total, como en partes iguales.
+ * Quien no tiene peso recibe 0. Con step 1 reparte al peso (lo de cada persona cuando la cuenta tiene descuento).
+ */
+export function splitProportional(total: number, weights: number[], step = 100) {
+  const w = weights.map((x) => (Number.isFinite(x) && x > 0 ? x : 0));
+  const out = w.map(() => 0);
+  const amount = Math.max(0, Math.round(Number(total) || 0));
+  if (!out.length || !amount) return out;
+  const sum = w.reduce((a, b) => a + b, 0);
+  // Nadie tiene peso: no hay proporción que seguir; queda en la primera parte para que no se pierda
+  if (!sum) {
+    out[0] = amount;
+    return out;
+  }
+  const last = w.reduce((found, x, i) => (x > 0 ? i : found), 0);
+  const unit = Math.max(1, Math.floor(step));
+  let left = amount;
+  w.forEach((x, i) => {
+    if (i === last || !x) return;
+    const part = Math.min(left, Math.round((amount * x) / sum / unit) * unit);
+    out[i] = part;
+    left -= part;
+  });
+  out[last] = left;
+  return out;
+}
+
 /** Billetes con los que suele pagar alguien: el valor exacto y los siguientes redondos. */
 export function cashSuggestions(due: number) {
   if (due <= 0) return [];
@@ -118,9 +147,12 @@ export function change(received: number, due: number) {
   return Math.max(0, received - due);
 }
 
-/** Lo que falta por pagar de una cuenta (sin propina) según los pagos registrados. */
+/**
+ * Lo que falta por pagar de una cuenta (sin propina) según los pagos registrados. Solo cuentan los pagos en firme ("ok", o sin
+ * estado): uno pendiente, rechazado o quitado no resta, y un estado nuevo tampoco hasta que se agregue aquí.
+ */
 export function balance(total: number, payments: { amount: number; status?: string }[]) {
-  const paid = payments.filter((p) => p.status !== "rejected" && p.status !== "pending").reduce((s, p) => s + p.amount, 0);
+  const paid = payments.filter((p) => !p.status || p.status === "ok").reduce((s, p) => s + p.amount, 0);
   return { paid, due: Math.max(0, total - paid) };
 }
 

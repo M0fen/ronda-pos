@@ -27,6 +27,14 @@ export function randomKey(length = 20) {
   return out;
 }
 
+/**
+ * Llave de un intento (un cobro, por ejemplo). Si la respuesta del servidor se pierde y se reintenta con la misma llave,
+ * el servidor reconoce el intento y no lo repite. Sirve también sin https (el wifi del local), donde no hay randomUUID.
+ */
+export function newAttemptKey() {
+  return typeof crypto.randomUUID === "function" ? crypto.randomUUID() : randomKey(32);
+}
+
 export function digits(value: string) {
   return value.replace(/\D/g, "");
 }

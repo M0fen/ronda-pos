@@ -1,6 +1,6 @@
 # Ronda
 
-Sistema de punto de venta para cafés, bares y restaurantes en Colombia: mesas, comandas a barra y cocina con la ficha de cada plato, domicilios de Rappi y propios con lista de empaque, mostrador con pantalla de turnos, cobro con propina voluntaria y cuentas divididas, separadas o unidas, alergias y anulaciones que barra y cocina ven en rojo, Nequi y Bre-B, factura electrónica, carta QR, inventario por receta, sellos para clientes, caja con arqueo ciego, turnos marcados con PIN, el costo de cada turno y de cada persona frente a lo que vende, varias sedes con un panel de la cadena y el resumen del día por WhatsApp. Funciona en el navegador de la tablet o el celular que ya tiene el local.
+Sistema de punto de venta para cafés, bares y restaurantes en Colombia: mesas, comandas a barra y cocina con la ficha de cada plato, domicilios de Rappi y propios con lista de empaque, mostrador con pantalla de turnos, cobro con propina voluntaria y cuentas divididas, separadas o unidas, alergias y anulaciones que barra y cocina ven en rojo, Nequi y Bre-B, factura electrónica, carta QR, inventario por receta, sellos para clientes, caja con arqueo ciego, turnos marcados con PIN, el costo de cada turno y de cada persona frente a lo que vende, varias sedes con un panel de la cadena, el resumen del día por WhatsApp y los archivos para el contador (ventas, impuestos, propinas, caja y compras por jornada y por sede). Funciona en el navegador de la tablet o el celular que ya tiene el local.
 
 La portada (`/`) presenta el sistema. La demo abre en `/entrar` con Sr. Patata, cadena de Pereira y Dosquebradas con cuatro sedes (Circunvalar, Belmonte, Dosquebradas y el mostrador de Galicia Mall Plaza): su carta pública con precios redondeados y, en cada sede, su equipo con los turnos de las últimas dos semanas, ventas en mesa, para llevar y por Rappi, y el servicio en marcha.
 
@@ -32,7 +32,8 @@ Un recorrido de diez minutos:
 8. En **Panel → Rentabilidad** mira qué turnos se pagan solos, cuánto costó cada persona con recargos y carga, y las alertas de jornada (42 horas, extras, domingos y festivos).
 9. En `/entrar`, toca **Marcar turno**, elige a Luisa y escribe 6666: queda en turno y suma a la mano de obra de hoy.
 10. Como **Andrés**, abre **Domicilios**: un pedido de Rappi en cada etapa. Acepta el nuevo, revisa la lista del que está para empacar (la bolsa no se cierra si falta algo) y entrega el que espera el domiciliario: queda pagado en la plataforma y con su factura. En **Barra y cocina** los tiquetes de domicilio dicen en cuánto llega el domiciliario.
-11. En **Panel → Cadena** compara las cuatro sedes: ventas, insumos, equipo, comisiones de Rappi, alertas y lo que hay que comprar en cada una. **Ir a Galicia** pasa la tablet a esa sede: abre **Pantalla de turnos** desde Barra y cocina para ver el televisor del mostrador.
+11. En **Panel → Contador** descarga las ventas, los impuestos, las propinas, la caja y las compras del mes, por sede o de toda la cadena, en archivos que Excel abre con doble clic.
+12. En **Panel → Cadena** compara las cuatro sedes: ventas, insumos, equipo, comisiones de Rappi, alertas y lo que hay que comprar en cada una. **Ir a Galicia** pasa la tablet a esa sede: abre **Pantalla de turnos** desde Barra y cocina para ver el televisor del mostrador.
 
 En **Panel → Ajustes** está el botón para reiniciar la demo.
 
@@ -60,12 +61,14 @@ npm run build      # genera la base de la demo y compila
 
 Sin `DATABASE_URL` la app usa PGlite (Postgres dentro de Node) en `.data/` y siembra el local de ejemplo. Borra `.data` para empezar de cero.
 
+`npm test` corre dos archivos a la vez (`vitest.config.mts`): cada prueba de integración levanta su propia base y con más se acaba la memoria. Lo que solo se ve con Postgres real (dos copias que arrancan a la vez, un cobro mientras se cierra la caja) está en `tests/postgres.integration.test.ts` y se corre aparte: `RONDA_PG_TEST_URL=postgres://… npx vitest run tests/postgres.integration.test.ts`, con una base desechable cuyo nombre contenga `ronda_test` (la borra).
+
 ## Publicar en Vercel
 
 1. Importa el repositorio en Vercel. No hace falta configurar nada: el build (`vercel.json`) genera la base de la demo y la app la carga en memoria.
 2. Opcional: `NEXT_PUBLIC_SALES_WHATSAPP` con el WhatsApp de contacto de la portada (sin ella usa el que trae `app/page.tsx`) y `SESSION_SECRET` con 32 caracteres al azar.
 
-La demo en memoria se reinicia sola cuando Vercel apaga la función (tras unos minutos sin visitas) y cada copia de la función tiene sus propios datos. Para que los datos persistan, conecta una base Postgres (por ejemplo Neon desde el Marketplace de Vercel) con `DATABASE_URL`; si además pones `DEMO_MODE=true`, se siembra el local de ejemplo y los pagos siguen simulados.
+La demo en memoria se reinicia cuando Vercel apaga la función, y se vuelve a sembrar sola cuando ya está vieja (más de 2 horas o cambió la jornada) y nadie la usa: sin escrituras en 15 minutos y sin una pantalla del equipo abierta en los últimos 45. Cada copia de la función tiene sus propios datos. Para que los datos persistan, conecta una base Postgres (por ejemplo Neon desde el Marketplace de Vercel) con `DATABASE_URL`; si además pones `DEMO_MODE=true`, se siembra el local de ejemplo y los pagos siguen simulados.
 
 Variables en `.env.example`.
 
@@ -75,13 +78,13 @@ Variables en `.env.example`.
 2. Abre `/entrar`: con la base vacía lleva a `/alta`. Con el código de instalación se crea el local (nombre, NIT, impuesto), el salón y el dueño con un PIN de 6 números. Esa tablet queda enrolada y el dueño adentro.
 3. El panel muestra **Para empezar a vender** hasta completar: carta (categorías, productos y precios), mesas y zonas, equipo con su PIN y sus tablets (Panel → Equipo da un código de 6 números que cada tablet escribe en `/entrar`), resolución de facturación de la DIAN (prefijo, rango y vigencia) y la primera caja. Insumos y recetas son opcionales: con ellos se descuenta el inventario y salen los márgenes.
 
-Seguridad: fuera de la demo solo las tablets enroladas muestran al equipo; cada persona se bloquea 15 minutos tras 5 PIN errados; la tablet se bloquea sola tras unos minutos sin uso (Panel → Ajustes); las sesiones se cierran al cambiar un PIN o un rol, o al quitar una tablet. La factura electrónica no se envía a la DIAN hasta conectar un proveedor tecnológico.
+Seguridad: fuera de la demo solo las tablets enroladas muestran al equipo; cada persona se bloquea 15 minutos tras 5 PIN errados; la tablet se bloquea sola tras unos minutos sin uso (Panel → Ajustes); las sesiones se cierran al cambiar un PIN o un rol, o al quitar una tablet. La factura electrónica no se envía a la DIAN hasta conectar un proveedor tecnológico. El arqueo es a ciegas de verdad: a quien cuenta la caja no le llega al navegador el esperado, la base ni el efectivo cobrado, y mientras su caja esté abierta no ve en el panel los totales de esa jornada. Si se cae la red a mitad de un cobro, la pantalla avisa y el reintento no cobra dos veces.
 
 ## Cómo está hecho
 
 - Next.js 16 (App Router), React 19 y Tailwind 4. Todo se lee en Server Components y todo lo que escribe va por Server Actions (no hay rutas `/api`).
-- `lib/core/`: reglas puras con pruebas (impuesto incluido, propina, división de cuentas, vueltas, sellos, happy hour, jornada; en `labor.ts` el costo de cada turno: recargos, festivos, carga prestacional y alertas de jornada; en `delivery.ts` las etapas de un domicilio y su lista de empaque).
-- `lib/server/`: pedidos y rondas, pagos y caja, domicilios, cadena, carta QR, inventario, reportes, recibos, equipo y permisos.
+- `lib/core/`: reglas puras con pruebas (impuesto incluido, propina, división de cuentas, vueltas, sellos, happy hour, jornada; en `csv.ts` el formato de los archivos del contador; en `labor.ts` el costo de cada turno: recargos, festivos, carga prestacional y alertas de jornada; en `delivery.ts` las etapas de un domicilio y su lista de empaque).
+- `lib/server/`: pedidos y rondas, pagos y caja, domicilios, cadena, carta QR, inventario, reportes, recibos, equipo y permisos, y en `export.ts` los archivos para el contador.
 - `lib/schema.ts`: migraciones SQL; `lib/seed.ts`: la cadena de la demo, cuatro sedes con dos semanas de ventas y de turnos.
 - Tiempo real por sondeo liviano: cada cambio sube un contador y las pantallas abiertas se refrescan.
 
