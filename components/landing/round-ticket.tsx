@@ -91,9 +91,10 @@ export function RoundTicket({ business }: { business: string }) {
         </article>
       </div>
 
-      <div className="mt-5 flex gap-2">
+      {/* En pantallas angostas, cobrar va en su propia fila: el total crece con cada toque y no se parte en dos renglones */}
+      <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto] gap-2 min-[440px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
         <button
-          className={cn("inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-xl font-semibold", sent ? "bg-puerta-soft text-puerta-2" : "bg-puerta text-white")}
+          className={cn("inline-flex h-12 items-center justify-center gap-2 rounded-xl font-semibold whitespace-nowrap", sent ? "bg-puerta-soft text-puerta-2" : "bg-puerta text-white")}
           onClick={() => setSent(new Intl.DateTimeFormat("es-CO", { hour: "numeric", minute: "2-digit", timeZone: "America/Bogota" }).format(new Date()))}
           disabled={!list.length}
         >
@@ -105,7 +106,11 @@ export function RoundTicket({ business }: { business: string }) {
             "Enviar a barra"
           )}
         </button>
-        <button className="inline-flex h-12 flex-1 items-center justify-center rounded-xl bg-balcon font-semibold text-white disabled:opacity-40" onClick={() => setPaid(true)} disabled={!list.length || paid}>
+        <button
+          className="order-last col-span-2 inline-flex h-12 items-center justify-center rounded-xl bg-balcon font-semibold whitespace-nowrap text-white tnum disabled:opacity-40 min-[440px]:order-none min-[440px]:col-span-1"
+          onClick={() => setPaid(true)}
+          disabled={!list.length || paid}
+        >
           Cobrar {cop(totals.total)}
         </button>
         <button

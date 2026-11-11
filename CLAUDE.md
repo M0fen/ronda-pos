@@ -42,6 +42,7 @@ Punto de venta para cafés, bares y restaurantes en Colombia (COP, impuesto al c
 - Clientes y mensajes: solo con autorización explícita y vigente (`consent_at` sin `consent_withdrawn_at`, Ley 1581). En Panel → Clientes se retira la autorización o se borran los datos (las facturas se conservan); WhatsApp se abre uno por uno.
 - Celulares de 10 dígitos sin el 57 (`normalizePhone`).
 - Movimiento: solo el que responde a algo (abrir una hoja, confirmar, llegar un tiquete, cambiar una mesa), nunca de adorno, y nada con "reducir movimiento". Las animaciones están en `app/globals.css` (`sheet-*`, `toast-*`, `arrive`, `row-in`, `stamp-in`, `rise-line`); el salón destella la mesa que cambió (`useFlashOnChange`) y la barra desliza los tiquetes nuevos (`Arrive`). La portada tiene un solo momento por sección: el titular y la tirilla al cargar, y el turno con la tablet fija (`components/landing/shift-tour.tsx`).
+- La portada se ve completa desde 320 px de ancho hasta un monitor grande: nada se sale a lo ancho y todo lo que se toca mide 44 px o más. Los márgenes laterales van con `px-page` (con el celular acostado no deja el contenido debajo de la cámara), el titular con `.hero-title` (sus dos líneas caben en cualquier celular) y `short:` es para pantallas bajitas (`app/globals.css`). El nombre del local puede ser largo: que parta bien, nunca que se corte.
 - Componentes de cliente solo donde hay interacción. Nada que dependa de la hora del navegador en el primer render: pasa la hora del servidor (ver `serverNow` en la barra) o usa `suppressHydrationWarning` en el número.
 - No guardes secretos en el código: todo va en variables de entorno (`.env.example`).
 
@@ -52,4 +53,4 @@ Punto de venta para cafés, bares y restaurantes en Colombia (COP, impuesto al c
 - En modo demo no corras scripts con `npm run dev` encendido (PGlite es de un solo proceso).
 - Accesos dinámicos a disco llevan `/*turbopackIgnore: true*/` para que el build no empaque todo el proyecto.
 - Datos de la demo: todo lo que siembres lleva `stableId()` para que coincida entre instancias. Las sedes están en `DEMO_SEDES`; la principal (Circunvalar) conserva los ids de cuando la demo tenía un solo local (`keyOf()`), así que no cambies sus llaves.
-- Las capturas de la portada (`public/shots/*.webp`) salen de la demo; si cambias pantallas, vuelve a tomarlas.
+- Las capturas de la portada (`public/shots/*.webp`) salen de la demo; si cambias pantallas, vuelve a tomarlas. `app/page.tsx` las importa (salen con su huella en el nombre) y `SIZES` en `components/landing/shift-tour.tsx` dice el ancho con que se pinta cada una, para que cada pantalla baje el archivo de su tamaño (AVIF o WebP) y no el original de 2.560 px: si cambias los márgenes o las columnas del recorrido, cambia `SIZES`.
