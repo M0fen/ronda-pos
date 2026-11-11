@@ -66,6 +66,15 @@
   button:disabled {
     cursor: not-allowed;
   }
+
+  /*
+   * Una rejilla sin columnas declaradas (`grid gap-3`, o con columnas solo desde cierto ancho) no se deja ensanchar
+   * por lo que trae adentro: en un celular angosto, un renglón que no parte empujaba toda la página a lo ancho.
+   * Con las columnas declaradas (`grid-cols-*`) esto no cambia nada.
+   */
+  .grid {
+    grid-auto-columns: minmax(0, 1fr);
+  }
 }
 
 .tnum {
@@ -77,6 +86,15 @@
 }
 .scrollbar-none::-webkit-scrollbar {
   display: none;
+}
+
+/*
+ * Lo que va pegado al borde de abajo en el celular (una barra fija, el menú de la carta QR, el espacio que se le
+ * reserva) suma lo que ocupan la barra de gestos de Android o el indicador de inicio del iPhone: `pb-safe-3` es
+ * `pb-3` más ese espacio. Donde no hay tal barra, suma cero.
+ */
+@utility pb-safe-* {
+  padding-bottom: calc(var(--spacing) * --value(number) + env(safe-area-inset-bottom));
 }
 
 /* Borde inferior dentado, como el corte del papel térmico */

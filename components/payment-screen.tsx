@@ -243,7 +243,7 @@ export function PaymentScreen({
   const canExact = !done && !waiting && split === "una" && customAmount === null && config.methods.includes("efectivo") && cashOpen && due > 0 && !hasDrafts;
 
   return (
-    <div className="mx-auto grid max-w-[1400px] gap-4 px-3 py-4 pb-28 sm:px-5 lg:grid-cols-[1fr_1.1fr] lg:pb-4">
+    <div className="pb-safe-28 mx-auto grid max-w-[1400px] gap-4 px-3 py-4 sm:px-5 lg:grid-cols-[1fr_1.1fr] lg:pb-4">
       {/* Resumen, propina, división, cliente y factura */}
       <section className="space-y-4">
         <div className="flex items-center gap-2">
@@ -627,7 +627,7 @@ export function PaymentScreen({
       </section>
 
       {/* En el celular el cobro queda lejos: una barra fija lleva a él (o cierra cuando ya está pagado) */}
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-linea bg-papel p-3 lg:hidden">
+      <div className="pb-safe-3 fixed inset-x-0 bottom-0 z-30 border-t border-linea bg-papel p-3 lg:hidden">
         {done ? (
           <button className={btn("warn", "lg", "w-full")} disabled={pending} onClick={close}>
             <Check size={20} /> {free ? "Cerrar cuenta" : "Cerrar cuenta y facturar"}

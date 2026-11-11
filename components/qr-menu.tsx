@@ -100,11 +100,11 @@ export function QrMenu({
 
   return (
     // Los avisos salen encima de la barra de abajo, sin taparla
-    <div className={cn("mx-auto min-h-dvh max-w-lg bg-cal [--toast-bottom:9.5rem]", tab === "carta" && count ? "pb-40" : "pb-24")}>
+    <div className={cn("mx-auto min-h-dvh max-w-lg bg-cal [--toast-bottom:9.5rem]", tab === "carta" && count ? "pb-safe-40" : "pb-safe-24")}>
       <header className="px-5 pt-6 pb-5 text-white" style={{ background: theme.primary }}>
         <p className="text-sm font-semibold text-white/80">Mesa {table}</p>
         <h1 className="mt-0.5 text-3xl font-extrabold leading-tight [font-stretch:112%]">{business.name}</h1>
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           <button className={btn("light", "sm", "flex-1 bg-white/15")} onClick={() => call("waiter")} disabled={pending}>
             <BellRing size={16} /> Llamar al mesero
           </button>
@@ -207,7 +207,7 @@ export function QrMenu({
       )}
 
       {tab === "carta" && count ? (
-        <div className="fixed inset-x-0 bottom-[76px] z-30 mx-auto max-w-lg px-3 pb-2">
+        <div className="fixed inset-x-0 bottom-[calc(76px+env(safe-area-inset-bottom))] z-30 mx-auto max-w-lg px-3 pb-2">
           <button onClick={() => setTab("pedido")} className="flex h-14 w-full items-center justify-between rounded-2xl px-5 font-bold text-white shadow-lg" style={{ background: theme.primary }}>
             <span className="inline-flex items-center gap-2">
               <ShoppingBag size={20} /> Ver mi pedido · {count}
@@ -217,7 +217,7 @@ export function QrMenu({
         </div>
       ) : null}
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto flex max-w-lg gap-1 border-t border-linea bg-papel p-2">
+      <nav className="pb-safe-2 fixed inset-x-0 bottom-0 z-30 mx-auto flex max-w-lg gap-1 border-t border-linea bg-papel p-2">
         {(
           [
             ["carta", "Carta", <Utensils key="c" size={20} />],
@@ -225,7 +225,7 @@ export function QrMenu({
             ["cuenta", "Mi cuenta", <Receipt key="r" size={20} />],
           ] as const
         ).map(([k, label, icon]) => (
-          <button key={k} onClick={() => setTab(k)} className={cn("flex h-14 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl text-[13px] font-semibold", tab === k ? "bg-tinto text-cal" : "text-tinto-2")}>
+          <button key={k} onClick={() => setTab(k)} className={cn("flex h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-xl text-[13px] font-semibold", tab === k ? "bg-tinto text-cal" : "text-tinto-2")}>
             {icon}
             {label}
           </button>
