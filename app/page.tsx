@@ -1,9 +1,11 @@
 import { MessageCircle } from "lucide-react";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { RoundTicket } from "@/components/landing/round-ticket";
 import { type ShiftStep, ShiftTour } from "@/components/landing/shift-tour";
 import { btn } from "@/components/ui";
 import { getBrand } from "@/lib/server/business";
+import { isDemoMode } from "@/lib/server/db";
 import { cn } from "@/lib/utils";
 
 const WHATSAPP = process.env.NEXT_PUBLIC_SALES_WHATSAPP ?? "573122143556";
@@ -83,6 +85,8 @@ const FAQ = [
 ];
 
 export default async function Landing() {
+  // En el sistema de un local (base propia, sin demo) no hay portada de venta: se entra directo
+  if (!isDemoMode()) redirect("/entrar");
   // Con la marca del local (Ajustes → Marca), la portada es la de su propio sistema
   const brand = await getBrand();
   const wl = brand.whiteLabel;

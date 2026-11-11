@@ -71,11 +71,15 @@ Variables en `.env.example`.
 
 ## Instalar un local real
 
-1. Base Postgres propia (Neon o Supabase) en `DATABASE_URL`, sin `DEMO_MODE`. Pon `SESSION_SECRET` (32 caracteres al azar: sin ella no se abren sesiones) y `SETUP_TOKEN` (12 caracteres o más).
-2. Abre `/entrar`: con la base vacía lleva a `/alta`. Con el código de instalación se crea el local (nombre, NIT, impuesto), el salón y el dueño con un PIN de 6 números. Esa tablet queda enrolada y el dueño adentro.
-3. El panel muestra **Para empezar a vender** hasta completar: carta (categorías, productos y precios), mesas y zonas, equipo con su PIN y sus tablets (Panel → Equipo da un código de 6 números que cada tablet escribe en `/entrar`), resolución de facturación de la DIAN (prefijo, rango y vigencia) y la primera caja. Insumos y recetas son opcionales: con ellos se descuenta el inventario y salen los márgenes.
+Cada local va en su propio proyecto de Vercel con su propia base. La demo pública no se toca: allí nada se guarda (el panel lo avisa).
 
-Seguridad: fuera de la demo solo las tablets enroladas muestran al equipo; cada persona se bloquea 15 minutos tras 5 PIN errados; la tablet se bloquea sola tras unos minutos sin uso (Panel → Ajustes); las sesiones se cierran al cambiar un PIN o un rol, o al quitar una tablet. La factura electrónica no se envía a la DIAN hasta conectar un proveedor tecnológico.
+1. **Base.** Proyecto de Supabase a nombre del local, en la región East US (North Virginia), la misma de las funciones de Vercel. En **Connect → Transaction pooler** copia la cadena (`postgres.<proyecto>@…pooler.supabase.com:6543`). La contraseña de la base, de solo letras y números.
+2. **Probar y sacar las claves.** `DATABASE_URL="…" npm run db:check` revisa la cadena y el certificado, crea las tablas, les activa RLS y genera `SESSION_SECRET` y `SETUP_TOKEN`. Al final imprime lo que va en Vercel.
+3. **Vercel.** Proyecto nuevo con este repositorio, en un equipo Pro (el plan Hobby no permite uso comercial). Variables: `DATABASE_URL`, `SESSION_SECRET` y `SETUP_TOKEN`, sin `DEMO_MODE`. En una instalación real `/` va directo a `/entrar`: no hay portada de venta.
+4. **Alta.** El dueño abre `https://<dirección>/alta?codigo=<SETUP_TOKEN>` en su tablet. Con la base vacía se crea el local (nombre, NIT, impuesto), el salón y el dueño con un PIN de 6 números. Esa tablet queda enrolada y el dueño adentro. Con el local creado, `/alta` ya no abre.
+5. El panel muestra **Para empezar a vender** hasta completar: carta (categorías, productos y precios), mesas y zonas, equipo con su PIN y sus tablets (Panel → Equipo da un código de 6 números que cada tablet escribe en `/entrar`), resolución de facturación de la DIAN (prefijo, rango y vigencia) y la primera caja. Insumos y recetas son opcionales: con ellos se descuenta el inventario y salen los márgenes.
+
+Seguridad: fuera de la demo solo las tablets enroladas muestran al equipo; cada persona se bloquea 15 minutos tras 5 PIN errados; la tablet se bloquea sola tras unos minutos sin uso (Panel → Ajustes); las sesiones se cierran al cambiar un PIN o un rol, o al quitar una tablet. En la base, todas las tablas llevan RLS sin políticas (la API de datos de Supabase no ve nada; la app es la dueña de las tablas y no la afecta) y la conexión va cifrada verificando el certificado de Supabase (`lib/supabase-ca.ts`). En el plan gratis Supabase pausa la base tras 7 días sin uso y no guarda copias: para vender a diario, plan Pro. La factura electrónica no se envía a la DIAN hasta conectar un proveedor tecnológico.
 
 ## Cómo está hecho
 

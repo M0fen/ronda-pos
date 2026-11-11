@@ -5,7 +5,9 @@
  */
 import path from "node:path";
 import { mkdir, readFile } from "node:fs/promises";
+import { rootCertificates } from "node:tls";
 import { MIGRATIONS } from "./schema";
+import { SUPABASE_ROOT_CA } from "./supabase-ca";
 
 export type Row = Record<string, unknown>;
 
@@ -53,7 +55,40 @@ function withOne(query: Tx["query"]): Tx {
   };
 }
 
+/**
+ * Lo que está mal en una cadena de conexión, en palabras de quien la configura. `error`: así no conecta;
+ * `aviso`: conecta, pero hay una opción mejor. Lo usan la app al arrancar y `npm run db:check`.
+ */
+export function connectionProblems(url: string): { level: "error" | "aviso"; text: string }[] {
+  if (/\[?YOUR-PASSWORD\]?/i.test(url)) return [{ level: "error", text: "La cadena todavía dice [YOUR-PASSWORD]: cámbialo por la contraseña de la base (sin los corchetes)." }];
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return [{ level: "error", text: "La cadena no es válida. Si la contraseña tiene símbolos (@ # / ? : %), cámbiala en Supabase por una de solo letras y números." }];
+  }
+  if (!/^postgres(ql)?:$/.test(parsed.protocol)) return [{ level: "error", text: "La cadena debe empezar por postgresql://" }];
+  const out: { level: "error" | "aviso"; text: string }[] = [];
+  if (/^db\.[a-z0-9]+\.supabase\.co$/i.test(parsed.hostname) && (parsed.port || "5432") === "5432") {
+    out.push({ level: "aviso", text: "Esa es la conexión directa de Supabase (solo IPv6, salvo con el complemento IPv4): Vercel no llega a ella. Usa la de Transaction pooler (…pooler.supabase.com:6543)." });
+  }
+  if (/\.pooler\.supabase\.com$/i.test(parsed.hostname) && parsed.port === "5432") {
+    out.push({ level: "aviso", text: "Es el pooler en modo sesión: funciona, pero en Vercel conviene el modo transacción (puerto 6543)." });
+  }
+  if (/\.pooler\.supabase\.com$/i.test(parsed.hostname) && !decodeURIComponent(parsed.username).includes(".") && !parsed.searchParams.get("options")?.includes("reference")) {
+    out.push({ level: "aviso", text: "En el pooler el usuario lleva el código del proyecto (postgres.xxxxxxxx). Copia la cadena completa desde Connect." });
+  }
+  return out;
+}
+
+/** Supabase firma la conexión con su propia autoridad: se confía en ella además de las públicas. */
+function isSupabase(hostname: string) {
+  return /(^|\.)supabase\.(co|com)$/i.test(hostname);
+}
+
 async function createPg(url: string): Promise<Db> {
+  const blocking = connectionProblems(url).find((p) => p.level === "error");
+  if (blocking) throw new Error(`DATABASE_URL: ${blocking.text}`);
   const pg = (await import("pg")).default;
   pg.types.setTypeParser(INT8, (v: string) => parseInt(v, 10));
   pg.types.setTypeParser(NUMERIC, (v: string) => parseFloat(v));
@@ -64,9 +99,9 @@ async function createPg(url: string): Promise<Db> {
   parsed.searchParams.delete("sslmode");
   parsed.searchParams.delete("channel_binding");
   const local = ["localhost", "127.0.0.1"].includes(parsed.hostname) || process.env.PGSSL === "disable";
-  // El certificado se verifica siempre (Neon sirve tal cual). Supabase usa su propia autoridad:
-  // pon su certificado en PGSSL_CA, o PGSSL=no-verify si no hay cómo
-  const ca = process.env.PGSSL_CA?.replace(/\\n/g, "\n");
+  // El certificado se verifica siempre. Neon usa autoridades públicas; Supabase, la suya (incluida en
+  // lib/supabase-ca.ts). Otro proveedor con certificado propio: PGSSL_CA, o PGSSL=no-verify si no hay cómo
+  const ca = process.env.PGSSL_CA?.replace(/\\n/g, "\n") ?? (isSupabase(parsed.hostname) ? [...rootCertificates, SUPABASE_ROOT_CA] : undefined);
   const pool = new pg.Pool({
     connectionString: parsed.toString(),
     max: Number(process.env.PG_POOL_MAX ?? 5),
@@ -171,7 +206,23 @@ async function migrate(db: Db) {
       if (m.run) await m.run(tx);
       await tx.query("insert into schema_version (version) values ($1)", [m.version]);
     }
+    if (db.kind === "pg") await closeDataApi(tx);
   });
+}
+
+/**
+ * Supabase publica por su API de datos (PostgREST) las tablas del esquema public. Ronda no usa esa API: con la
+ * seguridad por filas activa y sin políticas, desde allá no se ve ni se cambia nada. La app entra como dueña de
+ * las tablas, así que a ella no le aplica. Corre en cada arranque y solo toca las tablas que aún no la tienen.
+ */
+async function closeDataApi(tx: Tx) {
+  const open = await tx.query<{ name: string }>(
+    `select quote_ident(c.relname) as name
+       from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = current_schema() and c.relkind in ('r', 'p') and not c.relrowsecurity
+        and c.relowner = (select oid from pg_roles where rolname = current_user)`,
+  );
+  for (const t of open) await tx.query(`alter table ${t.name} enable row level security`);
 }
 
 /** Divide un script en sentencias (los scripts de migración no usan funciones con $$). */
