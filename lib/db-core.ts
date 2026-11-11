@@ -186,6 +186,12 @@ type Bootstrap = (db: Db) => Promise<void>;
 
 declare global {
   var __dzdb: Promise<Db> | undefined;
+  var __dzdbReady: boolean | undefined;
+}
+
+/** ¿La base ya arrancó en este proceso? Sirve para no hacer esperar a quien no la necesita todavía (la portada). */
+export function dbReady() {
+  return globalThis.__dzdbReady === true;
 }
 
 export function connect(bootstrap?: Bootstrap): Promise<Db> {
@@ -197,9 +203,11 @@ export function connect(bootstrap?: Bootstrap): Promise<Db> {
       await migrate(db);
       if (bootstrap) await bootstrap(db);
       if (isEphemeralDb()) console.info(`[db] demo en memoria lista en ${Date.now() - started} ms`);
+      globalThis.__dzdbReady = true;
       return db;
     })().catch((error) => {
       globalThis.__dzdb = undefined;
+      globalThis.__dzdbReady = false;
       throw error;
     });
   }
