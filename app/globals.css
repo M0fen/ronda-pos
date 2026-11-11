@@ -90,7 +90,7 @@
  * Si el nombre del local trae una palabra larga (--word, sus letras), la letra baja hasta que esa palabra quepa en su columna.
  */
 .hero-title {
-  font-size: min(max(min(11.9vw - 0.25rem, 2.7rem), min(7.2vw, 5.2rem)), 100cqw / (var(--word, 6) * 0.78));
+  font-size: max(min(11.9vw - 0.25rem, 2.7rem), min(7.2vw, 5.2rem));
 }
 /* Último recurso con un nombre de una sola palabra larguísima: que parta, no que se corte */
 .rise-line > span {
@@ -102,7 +102,17 @@
  * si no, baja hasta 20 px y parte en dos renglones, y solo baja más cuando su palabra más larga (--word) no cabe.
  */
 .brand-fit {
-  font-size: clamp(0.875rem, max(100cqw / (var(--name, 8) * 0.7), min(100cqw / (var(--word, 8) * 0.7), 1.25rem)), 1.5rem);
+  font-size: clamp(1.125rem, 5.6vw, 1.5rem);
+}
+
+/* Medir contra el espacio disponible (cqw) es de navegadores de 2022 en adelante; los de antes se quedan con los tamaños de arriba */
+@supports (width: 1cqw) {
+  .hero-title {
+    font-size: min(max(min(11.9vw - 0.25rem, 2.7rem), min(7.2vw, 5.2rem)), 100cqw / (var(--word, 6) * 0.78));
+  }
+  .brand-fit {
+    font-size: clamp(0.875rem, max(100cqw / (var(--name, 8) * 0.7), min(100cqw / (var(--word, 8) * 0.7), 1.25rem)), 1.5rem);
+  }
 }
 
 .scrollbar-none {
