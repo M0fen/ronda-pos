@@ -61,12 +61,14 @@ npm run build      # genera la base de la demo y compila
 
 Sin `DATABASE_URL` la app usa PGlite (Postgres dentro de Node) en `.data/` y siembra el local de ejemplo. Borra `.data` para empezar de cero.
 
+`npm test` corre dos archivos a la vez (`vitest.config.mts`): cada prueba de integración levanta su propia base y con más se acaba la memoria. Lo que solo se ve con Postgres real (dos copias que arrancan a la vez, un cobro mientras se cierra la caja) está en `tests/postgres.integration.test.ts` y se corre aparte: `RONDA_PG_TEST_URL=postgres://… npx vitest run tests/postgres.integration.test.ts`, con una base desechable cuyo nombre contenga `ronda_test` (la borra).
+
 ## Publicar en Vercel
 
 1. Importa el repositorio en Vercel. No hace falta configurar nada: el build (`vercel.json`) genera la base de la demo y la app la carga en memoria.
 2. Opcional: `NEXT_PUBLIC_SALES_WHATSAPP` con el WhatsApp de contacto de la portada (sin ella usa el que trae `app/page.tsx`) y `SESSION_SECRET` con 32 caracteres al azar.
 
-La demo en memoria se reinicia sola cuando Vercel apaga la función (tras unos minutos sin visitas) y cada copia de la función tiene sus propios datos. Para que los datos persistan, conecta una base Postgres (por ejemplo Neon desde el Marketplace de Vercel) con `DATABASE_URL`; si además pones `DEMO_MODE=true`, se siembra el local de ejemplo y los pagos siguen simulados.
+La demo en memoria se reinicia cuando Vercel apaga la función, y se vuelve a sembrar sola cuando ya está vieja (más de 2 horas o cambió la jornada) y nadie la usa: sin escrituras en 15 minutos y sin una pantalla del equipo abierta en los últimos 45. Cada copia de la función tiene sus propios datos. Para que los datos persistan, conecta una base Postgres (por ejemplo Neon desde el Marketplace de Vercel) con `DATABASE_URL`; si además pones `DEMO_MODE=true`, se siembra el local de ejemplo y los pagos siguen simulados.
 
 Variables en `.env.example`.
 
@@ -76,7 +78,7 @@ Variables en `.env.example`.
 2. Abre `/entrar`: con la base vacía lleva a `/alta`. Con el código de instalación se crea el local (nombre, NIT, impuesto), el salón y el dueño con un PIN de 6 números. Esa tablet queda enrolada y el dueño adentro.
 3. El panel muestra **Para empezar a vender** hasta completar: carta (categorías, productos y precios), mesas y zonas, equipo con su PIN y sus tablets (Panel → Equipo da un código de 6 números que cada tablet escribe en `/entrar`), resolución de facturación de la DIAN (prefijo, rango y vigencia) y la primera caja. Insumos y recetas son opcionales: con ellos se descuenta el inventario y salen los márgenes.
 
-Seguridad: fuera de la demo solo las tablets enroladas muestran al equipo; cada persona se bloquea 15 minutos tras 5 PIN errados; la tablet se bloquea sola tras unos minutos sin uso (Panel → Ajustes); las sesiones se cierran al cambiar un PIN o un rol, o al quitar una tablet. La factura electrónica no se envía a la DIAN hasta conectar un proveedor tecnológico.
+Seguridad: fuera de la demo solo las tablets enroladas muestran al equipo; cada persona se bloquea 15 minutos tras 5 PIN errados; la tablet se bloquea sola tras unos minutos sin uso (Panel → Ajustes); las sesiones se cierran al cambiar un PIN o un rol, o al quitar una tablet. La factura electrónica no se envía a la DIAN hasta conectar un proveedor tecnológico. El arqueo es a ciegas de verdad: a quien cuenta la caja no le llega al navegador el esperado, la base ni el efectivo cobrado, y mientras su caja esté abierta no ve en el panel los totales de esa jornada. Si se cae la red a mitad de un cobro, la pantalla avisa y el reintento no cobra dos veces.
 
 ## Cómo está hecho
 

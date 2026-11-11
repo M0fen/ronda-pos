@@ -28,6 +28,8 @@ El diagnóstico (decisiones por frente, arreglos confirmados, competencia verifi
 7. **10 nov.** Caja sin conexión como app web instalable (PWA), sin envoltorio Android y sin `experimental.useOffline`. El envoltorio (TWA) queda para después de la demo.
 8. **10 nov.** Impresión por una capa ESC/POS propia con tres salidas: Web Bluetooth, RawBT (Bluetooth clásico, USB y red) y la impresión del navegador como respaldo.
 9. **10 nov.** El repositorio está público. Por eso el diagnóstico que se sube no trae el detalle de los endurecimientos de seguridad que quedan para las olas 2 y 3 ni notas de la conversación comercial; la versión completa queda en `.noche/` (local, ignorada por git). Recomendación: volver privado el repositorio, que ya estaba pendiente desde el PR #3.
+10. **10 nov. · Para confirmar con Carlos.** Con la caja abierta, quien cuenta la caja (rol caja) no ve en el panel los totales de esa jornada; vuelven a verse al cerrarla. Lo decidió el constructor de arreglos, más allá del diagnóstico: quitar solo la fila «Efectivo» no bastaba, porque el efectivo se deducía restando los otros medios al total. Dueño y administración ven todo. Se revierte quitando una línea en `app/(pos)/panel/page.tsx` (`if (hidden(day)) return <TotalsAfterCount …/>`).
+11. **10 nov.** `npm test` corre dos archivos a la vez (`vitest.config.mts`): con más, las pruebas de integración se quedan sin memoria en este equipo.
 
 ## Lo que Carlos debe hacer antes de mostrarle la demo a Sr. Patata
 
@@ -50,6 +52,19 @@ El diagnóstico (decisiones por frente, arreglos confirmados, competencia verifi
 - 16:40 · Sesión retomada. En dos días `main` recibió los PR #3, #5, #6 y #7 (salón, portada, barra y cocina, cuentas que se separan, se unen y retienen, migración v5). El diagnóstico se hizo sobre la rama anterior, así que cada arreglo se vuelve a verificar contra el código actual antes de aplicarlo.
 - 16:55 · `noche/exportar-contador` puesta al día con `main` (un conflicto en el README, resuelto con el texto de `main` más las líneas del contador). Typecheck, **87 pruebas** y build en verde. El PR #4 pasa a apuntar a `main`. Se agrega `DIAGNOSTICO_NOCHE.md`.
 - 17:05 · Arranca la ola 1 con tres constructores en paralelo, cada uno en su worktree: arreglos de plata, factura electrónica (servidor) e impresión térmica. Después: pantallas de la factura y caja sin conexión.
+- 17:30 · Se instaló un Postgres 16 real, embebido y local (en el scratchpad de la sesión, sin crear nada en la nube), para probar la ruta de Postgres. La base actual pasó el recorrido completo sobre Postgres real: migraciones, siembra de las cuatro sedes y 21 pantallas en tablet y celular sin errores.
+- 19:20 · **Arreglos de plata cerrados** en `noche/arreglos-plata` (migración v6). Los doce arreglos del diagnóstico quedaron con su prueba:
+  - Cobro: cada intento lleva una llave (`payments.attempt_key`); un reintento tras caída de red no cobra dos veces y la pantalla avisa cuando no supo si el pago quedó. «Efectivo exacto y cerrar» es una sola acción y una sola transacción.
+  - Arqueo a ciegas de verdad: el esperado, la base y el efectivo cobrado no viajan al navegador de quien cuenta la caja (ni en la página, ni en el historial, ni en el panel, ni en el texto de WhatsApp).
+  - Propina por persona en «Cada quien lo suyo»: múltiplos de $100 que suman exactamente lo que aceptó el cliente.
+  - Rentabilidad y Cadena ya no duplican la venta de una cuenta refacturada.
+  - Guardia de transacciones: usar la base de afuera dentro de `db.tx` lanza un error claro en vez de colgar la demo.
+  - Con Postgres real: candado de arranque (dos copias no siembran a la vez) y candado de la caja al cobrar (un pago no entra a una caja que se está cerrando).
+  - La demo en memoria no se vuelve a sembrar mientras haya una pantalla del equipo abierta.
+  - Hojas de autorización que no pierden el PIN con cada refresco, premio de sellos que cuenta las adiciones, saldo solo con pagos en firme y opciones de la carta sin precio negativo.
+  - La revisión propia del constructor encontró y corrigió cinco defectos más; el más serio, un interbloqueo de pagar y cerrar con Postgres real, reproducido antes del arreglo.
+  - Verificado: typecheck, 130 pruebas y build; 8 pruebas de concurrencia contra Postgres real (17.9 del constructor y 16.15 del integrador). Recorrido en tablet y celular.
+- 19:25 · Trampa de este equipo, ya anotada en CLAUDE.md: si la terminal está parada en `c:…` con la unidad en minúscula (como abre VS Code la carpeta), vitest falla en todas las pruebas con «Vitest failed to find the current suite». Entrando con `cd C:Users…` pasa todo. No es del código: pasa igual en `main`.
 
 ## Pendiente
 
