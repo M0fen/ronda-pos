@@ -79,6 +79,22 @@
   display: none;
 }
 
+/* Tabla ancha en una pantalla angosta: la primera columna se queda quieta y una sombra en el borde avisa que hay más
+   (la sombra se va cuando se llega al final). Va sobre fondo papel. */
+.table-scroll {
+  overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--color-papel) 30%, transparent) left / 2.5rem 100% no-repeat local,
+    linear-gradient(to left, var(--color-papel) 30%, transparent) right / 2.5rem 100% no-repeat local,
+    radial-gradient(farthest-side at 100% 50%, rgb(36 21 15 / 0.16), transparent) right / 0.9rem 100% no-repeat scroll;
+}
+.table-scroll :is(th, td):first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--color-papel);
+}
+
 /* Borde inferior dentado, como el corte del papel térmico */
 .ticket-edge {
   --tooth: 8px;

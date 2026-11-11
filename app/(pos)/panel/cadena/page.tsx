@@ -70,7 +70,7 @@ export default async function ChainPage({ searchParams }: { searchParams: Promis
         <h2 className="font-bold">Sedes lado a lado</h2>
         <p className="mb-3 text-sm text-humo">Ordenadas por lo que deja cada peso vendido. Toca una sede para pasar esta tablet allá.</p>
         {/* En el celular, una tarjeta por sede */}
-        <ul className="divide-y divide-linea md:hidden">
+        <ul className="divide-y divide-linea lg:hidden">
           {ranked.map((s) => {
             const t = s.report.totals;
             const labor = pct(t.labor, t.net);
@@ -108,7 +108,7 @@ export default async function ChainPage({ searchParams }: { searchParams: Promis
             );
           })}
         </ul>
-        <div className="hidden overflow-x-auto md:block">
+        <div className="table-scroll hidden lg:block">
           <table className="w-full min-w-[880px] text-left">
             <thead>
               <tr className="border-b border-linea text-sm text-humo">

@@ -92,7 +92,7 @@ export function InventoryView({
                     <span className="flex items-center gap-1.5 font-semibold">
                       {i.name}
                       {canManage ? (
-                        <button className="flex size-8 items-center justify-center rounded-lg hover:bg-tinto/6" aria-label={`Editar ${i.name}`} onClick={() => setEditing(i)}>
+                        <button className="flex size-10 items-center justify-center rounded-lg hover:bg-tinto/6" aria-label={`Editar ${i.name}`} onClick={() => setEditing(i)}>
                           <Pencil size={14} />
                         </button>
                       ) : null}
