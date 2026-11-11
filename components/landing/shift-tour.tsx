@@ -4,16 +4,39 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
+/** Una captura: la ruta del archivo (con su huella) y su tamaño real. */
+export interface Shot {
+  src: string;
+  width: number;
+  height: number;
+}
+
 export interface ShiftStep {
   time: string;
   title: string;
   text: string;
-  shot: string;
+  shot: Shot;
   /** Captura de celular (la carta QR): sale en un teléfono al lado de la tablet */
   phone?: boolean;
   /** Lo que muestra la tablet mientras el celular está al frente */
-  tablet?: string;
+  tablet?: Shot;
 }
+
+/*
+ * El ancho con que se pinta cada captura, para que cada pantalla baje el archivo de su tamaño y no el original.
+ * Salen de las medidas de la página: si cambias los márgenes o las columnas del recorrido, cámbialos aquí también.
+ * Lo que no se ve en un tamaño (la tablet fija en el celular, las capturas sueltas en el computador) no se baja.
+ */
+const SIZES = {
+  /** Debajo de cada hora, en celular y tablet vertical: el ancho de la página menos los márgenes y la línea del turno */
+  inline: "(min-width: 1024px) 1px, (min-width: 640px) calc(100vw - 96px), calc(100vw - 80px)",
+  /** El celular de la carta QR debajo de su hora */
+  inlinePhone: "(min-width: 1024px) 1px, 230px",
+  /** La pantalla de la tablet fija: 7 de las 12 columnas, menos el marco */
+  tablet: "(max-width: 1023px) 1px, (min-width: 1200px) 581px, calc(58.33vw - 91px)",
+  /** El celular que sale al frente de la tablet */
+  phone: "(max-width: 1023px) 1px, 174px",
+};
 
 /**
  * Un turno de principio a fin. En computador, la tablet se queda quieta a la derecha y cambia de pantalla
@@ -24,18 +47,24 @@ export function ShiftTour({ steps, business }: { steps: ShiftStep[]; business: s
   const [active, setActive] = useState(0);
   const items = useRef<(HTMLLIElement | null)[]>([]);
   useEffect(() => {
-    const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) if (e.isIntersecting) setActive(Number((e.target as HTMLElement).dataset.i));
-      },
-      { rootMargin: "-45% 0px -45% 0px" },
-    );
+    // La hora que se está leyendo es la última que ya subió hasta la mitad de la pantalla. Se mira dónde quedó
+    // cada una, no cuál cruzó: así también acierta cuando se llega de un salto (un enlace del menú, volver arriba).
+    const pick = () => {
+      const line = window.innerHeight * 0.55;
+      let current = 0;
+      items.current.forEach((el, i) => {
+        if (el && el.getBoundingClientRect().top <= line) current = i;
+      });
+      setActive(current);
+    };
+    const io = new IntersectionObserver(pick, { rootMargin: "-45% 0px -45% 0px" });
     for (const el of items.current) if (el) io.observe(el);
     return () => io.disconnect();
   }, []);
   const step = steps[active]!;
-  const tabletShot = step.phone ? (step.tablet ?? steps[0]!.shot) : step.shot;
-  const tablets = [...new Set(steps.map((s) => (s.phone ? (s.tablet ?? steps[0]!.shot) : s.shot)))];
+  const tabletOf = (s: ShiftStep) => (s.phone ? (s.tablet ?? steps[0]!.shot) : s.shot);
+  const tabletShot = tabletOf(step).src;
+  const tablets = [...new Set(steps.map((s) => tabletOf(s).src))];
   const phones = steps.filter((s) => s.phone);
 
   return (
@@ -68,15 +97,15 @@ export function ShiftTour({ steps, business }: { steps: ShiftStep[]; business: s
                 )}
               />
               <time className="block text-[15px] leading-[25px] font-semibold text-tinto-2 tnum">{s.time}</time>
-              <h3 className="mt-1 text-[clamp(1.6rem,2.6vw,2.1rem)] leading-[1.08] font-extrabold tracking-tight [font-stretch:112%]">{s.title}</h3>
+              <h3 className="mt-1 text-[clamp(1.6rem,2.6vw,2.1rem)] leading-[1.08] font-extrabold tracking-tight text-balance [font-stretch:112%]">{s.title}</h3>
               <p className="mt-3 max-w-[44ch] text-lg leading-relaxed text-tinto-2">{s.text}</p>
             </div>
             {/* En el celular y la tablet vertical, la captura va aquí mismo */}
             <div className="mt-5 lg:hidden">
               {s.phone ? (
-                <Image src={s.shot} alt={s.title} width={390} height={844} className="mx-auto h-auto w-[230px] rounded-[30px] shadow-xl ring-[7px] ring-noche" />
+                <Image src={s.shot.src} alt={s.title} width={s.shot.width} height={s.shot.height} sizes={SIZES.inlinePhone} className="mx-auto h-auto w-[230px] rounded-[30px] shadow-xl ring-[7px] ring-noche" />
               ) : (
-                <Image src={s.shot} alt={s.title} width={1280} height={800} className="h-auto w-full rounded-2xl shadow-lg ring-1 ring-linea" />
+                <Image src={s.shot.src} alt={s.title} width={s.shot.width} height={s.shot.height} sizes={SIZES.inline} className="h-auto w-full rounded-2xl bg-papel shadow-lg ring-1 ring-linea" />
               )}
             </div>
           </li>
@@ -96,7 +125,7 @@ export function ShiftTour({ steps, business }: { steps: ShiftStep[]; business: s
                     alt={src === tabletShot ? step.title : ""}
                     aria-hidden={src !== tabletShot}
                     fill
-                    sizes="(min-width: 1024px) 700px, 100vw"
+                    sizes={SIZES.tablet}
                     className={cn(
                       "object-cover object-top transition-[opacity,transform] duration-500 ease-out",
                       src === tabletShot ? "scale-100 opacity-100" : "opacity-0 motion-safe:scale-[1.015]",
@@ -105,17 +134,17 @@ export function ShiftTour({ steps, business }: { steps: ShiftStep[]; business: s
                 ))}
               </div>
             </div>
-            {/* El celular del cliente, solo en la hora de la carta QR */}
+            {/* El celular del cliente, solo en la hora de la carta QR. Con poco margen (tablet acostada) se queda dentro de la página */}
             {phones.map((p) => (
               <div
-                key={p.shot}
+                key={p.shot.src}
                 aria-hidden={p !== step}
                 className={cn(
-                  "absolute -right-6 -bottom-14 w-[31%] rounded-[34px] bg-noche p-[7px] shadow-[0_40px_70px_-30px_rgba(23,19,16,0.7)] transition-[opacity,transform] duration-500 ease-out",
+                  "absolute right-1 -bottom-14 w-[31%] rounded-[34px] bg-noche p-[7px] shadow-[0_40px_70px_-30px_rgba(23,19,16,0.7)] transition-[opacity,transform] duration-500 ease-out xl:-right-6",
                   p === step ? "rotate-[4deg] opacity-100" : "pointer-events-none opacity-0 motion-safe:translate-y-10 motion-safe:rotate-[8deg]",
                 )}
               >
-                <Image src={p.shot} alt={p === step ? p.title : ""} width={390} height={844} className="h-auto w-full rounded-[28px]" />
+                <Image src={p.shot.src} alt={p === step ? p.title : ""} width={p.shot.width} height={p.shot.height} sizes={SIZES.phone} className="h-auto w-full rounded-[28px]" />
               </div>
             ))}
           </div>

@@ -72,6 +72,39 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Pantallas bajitas (un celular acostado): lo fijo ocupa menos */
+@custom-variant short (@media (max-height: 480px));
+
+/* Margen lateral de la portada. Con el celular acostado, el contenido no queda debajo de la cámara */
+@utility px-page {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+  @media (width >= 40rem) {
+    padding-left: max(1.5rem, env(safe-area-inset-left));
+    padding-right: max(1.5rem, env(safe-area-inset-right));
+  }
+}
+
+/*
+ * El titular de la portada: «en una tablet.» cabe en una línea desde 320 px de ancho, y de ahí crece con la pantalla.
+ * Si el nombre del local trae una palabra larga (--word, sus letras), la letra baja hasta que esa palabra quepa en su columna.
+ */
+.hero-title {
+  font-size: min(max(min(11.9vw - 0.25rem, 2.7rem), min(7.2vw, 5.2rem)), 100cqw / (var(--word, 6) * 0.78));
+}
+/* Último recurso con un nombre de una sola palabra larguísima: que parta, no que se corte */
+.rise-line > span {
+  max-width: 100%;
+}
+
+/*
+ * El nombre del local en el encabezado: del tamaño normal si cabe en un renglón junto al botón (--name, sus letras);
+ * si no, baja hasta 20 px y parte en dos renglones, y solo baja más cuando su palabra más larga (--word) no cabe.
+ */
+.brand-fit {
+  font-size: clamp(0.875rem, max(100cqw / (var(--name, 8) * 0.7), min(100cqw / (var(--word, 8) * 0.7), 1.25rem)), 1.5rem);
+}
+
 .scrollbar-none {
   scrollbar-width: none;
 }
