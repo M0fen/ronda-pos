@@ -72,6 +72,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Una cuadrícula nunca empuja la pantalla: sus hijos se pueden encoger (en el celular, lo largo se corta o baja de
+   línea). Sin esto, un campo de fecha o un nombre largo agranda la página y el celular la muestra alejada. */
+@layer base {
+  .grid > * {
+    min-width: 0;
+  }
+}
+
 .scrollbar-none {
   scrollbar-width: none;
 }

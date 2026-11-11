@@ -66,7 +66,7 @@ export function MenuEditor({
           <h1 className="text-2xl font-bold">Carta</h1>
           <p className="text-humo">Los cambios se ven al instante en la caja y en la carta QR. El margen sale de la receta y el costo de los insumos.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button className={btn("soft", "md")} onClick={() => setCats(true)}>
             Categorías
           </button>

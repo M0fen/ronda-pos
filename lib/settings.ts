@@ -7,7 +7,8 @@ export interface Settings {
   /** Colores del local. Con whiteLabel, el sistema entero lleva el nombre y los colores del local en lugar de Ronda. */
   theme: { primary: string; accent: string; whiteLabel: boolean };
   tax: { label: string; rate: number };
-  tips: { enabled: boolean; suggestedPct: number };
+  /** Propina: se pregunta siempre; se reparte por horas trabajadas o en partes iguales entre los cargos que la reciben (Ley 1935) */
+  tips: { enabled: boolean; suggestedPct: number; split: "horas" | "partes"; roles: string[] };
   payments: { efectivo: boolean; nequi: boolean; breb: boolean; tarjeta: boolean; daviplata: boolean; nequiPhone: string; brebKey: string };
   happyHour: HappyHour;
   loyalty: { enabled: boolean; minPurchase: number; goal: number; reward: string; rewardMax: number };
@@ -53,7 +54,7 @@ export const DEFAULT_SETTINGS: Settings = {
   business: { name: "Mi local", legalName: "", nit: "", address: "", city: "Pereira, Risaralda", phone: "", instagram: "" },
   theme: { primary: "#1E4FB8", accent: "#F4B400", whiteLabel: false },
   tax: { label: "Impuesto al consumo", rate: 8 },
-  tips: { enabled: true, suggestedPct: 10 },
+  tips: { enabled: true, suggestedPct: 10, split: "horas", roles: ["waiter", "bar", "cashier"] },
   payments: { efectivo: true, nequi: true, breb: true, tarjeta: true, daviplata: false, nequiPhone: "", brebKey: "" },
   happyHour: { enabled: false, days: [1, 2, 3, 4, 5], from: "17:00", to: "19:00", label: "Happy hour" },
   loyalty: { enabled: true, minPurchase: 15000, goal: 8, reward: "Una bebida de la casa", rewardMax: 12000 },
@@ -125,6 +126,8 @@ export function mergeSettings(saved: unknown): Settings {
     s.kds[`${st}Late`] = Math.min(120, Math.max(warn + 1, Math.round(s.kds[`${st}Late`]) || DEFAULT_SETTINGS.kds[`${st}Late`]));
   }
   for (const k of ["void", "courtesy", "discount", "notes"] as const) s.reasons[k] = cleanList(s.reasons[k]);
+  if (s.tips.split !== "partes") s.tips.split = "horas";
+  s.tips.roles = Array.isArray(s.tips.roles) ? ["waiter", "bar", "cashier", "admin"].filter((r) => s.tips.roles.includes(r)) : [...DEFAULT_SETTINGS.tips.roles];
   for (const k of ["prefix", "fePrefix"] as const) s.invoice[k] = String(s.invoice[k] ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
   for (const k of ["validFrom", "validTo", "feValidFrom", "feValidTo"] as const) if (!/^\d{4}-\d{2}-\d{2}$/.test(String(s.invoice[k] ?? ""))) s.invoice[k] = "";
   for (const k of ["rangeFrom", "rangeTo", "feRangeFrom", "feRangeTo"] as const) s.invoice[k] = Math.max(0, Math.floor(Number(s.invoice[k]) || 0));

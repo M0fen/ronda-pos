@@ -18,7 +18,12 @@ export default async function PanelLayout({ children }: { children: React.ReactN
   const links = [
     ...(chain ? [{ href: "/panel/cadena", label: "Cadena" }] : []),
     { href: "/panel", label: "Resumen" },
-    ...(manage ? [{ href: "/panel/rentabilidad", label: "Rentabilidad" }] : []),
+    ...(manage
+      ? [
+          { href: "/panel/rentabilidad", label: "Rentabilidad" },
+          { href: "/panel/reportes", label: "Reportes" },
+        ]
+      : []),
     { href: "/panel/inventario", label: "Inventario" },
     { href: "/panel/clientes", label: "Clientes" },
     ...(manage

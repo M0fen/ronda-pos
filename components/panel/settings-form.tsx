@@ -78,7 +78,8 @@ export function SettingsForm({
     <div className="pb-24">
       <h1 className="text-2xl font-bold">Ajustes</h1>
       <p className="text-humo">Todo lo que cambia entre un local y otro se ajusta aquí, sin tocar código.</p>
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      {/* grid-cols-1: cada tarjeta se ajusta a la pantalla aunque traiga campos de fecha (en el celular no se salen) */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="El local">
           {text("business", "name", "Nombre")}
           {text("business", "legalName", "Razón social")}
@@ -121,6 +122,48 @@ export function SettingsForm({
           </button>
           {toggle("tips", "enabled", "Propina voluntaria", "El cobro pregunta siempre si el cliente la incluye")}
           {text("tips", "suggestedPct", "Propina sugerida (%)", { type: "number", hint: "La ley no permite sugerir más del 10 %" })}
+          <div>
+            <span className="text-sm font-semibold text-humo">Cómo se reparte (Panel → Reportes)</span>
+            <div className="mt-1 grid grid-cols-2 gap-2">
+              {(
+                [
+                  ["horas", "Por horas trabajadas"],
+                  ["partes", "En partes iguales"],
+                ] as const
+              ).map(([m, label]) => (
+                <button key={m} type="button" onClick={() => up("tips", "split", m)} className={cn("min-h-12 rounded-xl px-2 font-semibold ring-1", s.tips.split === m ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span className="text-sm font-semibold text-humo">Quiénes la reciben</span>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {(
+                [
+                  ["waiter", "Meseros"],
+                  ["bar", "Barra y cocina"],
+                  ["cashier", "Caja"],
+                  ["admin", "Administración"],
+                ] as const
+              ).map(([r, label]) => {
+                const on = s.tips.roles.includes(r);
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => up("tips", "roles", on ? s.tips.roles.filter((x) => x !== r) : [...s.tips.roles, r])}
+                    className={cn("min-h-11 rounded-full px-4 font-semibold ring-1", on ? "bg-tinto text-cal ring-tinto" : "ring-linea-2")}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[13px] text-humo">Ley 1935: la propina es de quienes atienden, se reparte al menos cada mes y el local no se queda con nada.</p>
+          </div>
         </Card>
         <Card title="Medios de pago">
           <div className="grid grid-cols-2 gap-2">
