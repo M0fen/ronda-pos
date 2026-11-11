@@ -1,4 +1,5 @@
 import "server-only";
+import { channelOfCheck, menuForChannel } from "../core/channels";
 import { balance, checkTotals, type CheckTotals } from "../core/pricing";
 import { minutesSince } from "../core/time";
 import { can, requireAuth, verifyAuthorizer, type AuthInput, type Staff } from "./auth";
@@ -290,6 +291,7 @@ interface LockedCheck {
   discount_pct: number;
   discount_reason: string | null;
   kind: CheckRow["kind"];
+  channel: string;
   table_id: string | null;
   split_of: string | null;
   opened_by: string | null;
@@ -298,7 +300,7 @@ interface LockedCheck {
   customer_id: string | null;
 }
 
-const LOCKED_COLUMNS = "id, status, number, discount_pct, discount_reason, kind, table_id, split_of, opened_by, guests, name, customer_id";
+const LOCKED_COLUMNS = "id, status, number, discount_pct, discount_reason, kind, channel, table_id, split_of, opened_by, guests, name, customer_id";
 
 async function editableCheck(tx: Tx, bizId: string, checkId: string) {
   if (!UUID.test(String(checkId))) throw new UserError("Cuenta no encontrada");
@@ -388,9 +390,11 @@ export async function openCheck(staff: Staff, input: { tableId?: string | null; 
 
 export async function addItems(staff: Staff, checkId: string, chosen: ChosenItem[], source = "staff", tx?: Tx) {
   if (!chosen.length) return;
-  const menu = await loadMenu(staff.business_id);
+  const full = await loadMenu(staff.business_id);
   const run = async (t: Tx) => {
-    await editableCheck(t, staff.business_id, checkId);
+    const check = await editableCheck(t, staff.business_id, checkId);
+    // Cada canal ve su carta: lo que no se ofrece allí no entra y el precio es el del canal (Rappi, para llevar…)
+    const menu = menuForChannel(full, source === "qr" ? "qr" : channelOfCheck(check));
     for (const c of chosen.slice(0, 40)) {
       const line = priceItem(menu, c);
       if (line.product.soldOut) throw new UserError(`${line.product.name} está agotado`);
@@ -437,7 +441,7 @@ export async function changeDraft(staff: Staff, itemId: string, patch: DraftPatc
     // Primero la cuenta y después el producto, en el mismo orden que enviar o anular: dos tablets a la vez no se traban
     const owner = await tx.one<{ check_id: string }>("select check_id from check_items where id = $1 and business_id = $2", [itemId, staff.business_id]);
     if (!owner) throw new UserError("Ítem no encontrado");
-    await editableCheck(tx, staff.business_id, owner.check_id);
+    const check = await editableCheck(tx, staff.business_id, owner.check_id);
     const item = await tx.one<{ check_id: string; status: string; product_id: string | null; note: string; allergy: boolean; held: boolean }>(
       "select check_id, status, product_id, note, allergy, held from check_items where id = $1 and check_id = $2 for update",
       [itemId, owner.check_id],
@@ -467,7 +471,7 @@ export async function changeDraft(staff: Staff, itemId: string, patch: DraftPatc
     if (patch.held !== undefined) set("held", !!patch.held);
     if (menu) {
       if (!item.product_id) throw new UserError("Ese producto ya no está en la carta");
-      const line = priceItem(menu, { productId: item.product_id, qty: 1, modifierIds: patch.modifierIds!.map(String), note });
+      const line = priceItem(menuForChannel(menu, channelOfCheck(check)), { productId: item.product_id, qty: 1, modifierIds: patch.modifierIds!.map(String), note });
       set("modifiers", JSON.stringify(line.modifiers), "::jsonb");
       set("unit_price", line.product.price);
     }
@@ -478,16 +482,34 @@ export async function changeDraft(staff: Staff, itemId: string, patch: DraftPatc
   });
 }
 
-/** Descuenta (o devuelve) insumos según las recetas. */
-export async function moveStock(tx: Tx, bizId: string, items: { product_id: string | null; qty: number }[], sign: -1 | 1, reason: "venta" | "anulacion", ref: string, staffId: string | null) {
+/** Descuenta (o devuelve) insumos según las recetas del producto y de sus opciones ("Tocineta" gasta su tocineta). */
+export async function moveStock(
+  tx: Tx,
+  bizId: string,
+  items: { product_id: string | null; qty: number; modifiers?: { id?: string }[] | null }[],
+  sign: -1 | 1,
+  reason: "venta" | "anulacion",
+  ref: string,
+  staffId: string | null,
+) {
   const ids = [...new Set(items.map((i) => i.product_id).filter((x): x is string => !!x))];
-  if (!ids.length) return;
-  const recipe = await tx.query<{ product_id: string; ingredient_id: string; qty: number }>(
-    "select product_id, ingredient_id, qty from recipe_items where product_id = any($1::uuid[])",
-    [ids],
-  );
+  const modIds = [...new Set(items.flatMap((i) => (i.modifiers ?? []).map((m) => m.id)).filter((x): x is string => !!x && UUID.test(x)))];
+  if (!ids.length && !modIds.length) return;
+  const recipe = ids.length
+    ? await tx.query<{ product_id: string; ingredient_id: string; qty: number }>("select product_id, ingredient_id, qty from recipe_items where product_id = any($1::uuid[])", [ids])
+    : [];
+  const modRecipe = modIds.length
+    ? await tx.query<{ modifier_id: string; ingredient_id: string; qty: number }>(
+        "select modifier_id, ingredient_id, qty from modifier_recipe_items where business_id = $1 and modifier_id = any($2::uuid[])",
+        [bizId, modIds],
+      )
+    : [];
   const delta = new Map<string, number>();
-  for (const it of items) for (const r of recipe.filter((x) => x.product_id === it.product_id)) delta.set(r.ingredient_id, (delta.get(r.ingredient_id) ?? 0) + Number(r.qty) * it.qty * sign);
+  const add = (ingredient: string, qty: number) => delta.set(ingredient, (delta.get(ingredient) ?? 0) + qty);
+  for (const it of items) {
+    for (const r of recipe.filter((x) => x.product_id === it.product_id)) add(r.ingredient_id, Number(r.qty) * it.qty * sign);
+    for (const m of it.modifiers ?? []) for (const r of modRecipe.filter((x) => x.modifier_id === m.id)) add(r.ingredient_id, Number(r.qty) * it.qty * sign);
+  }
   if (!delta.size) return;
   const rows = [...delta].map(([ingredient_id, d]) => ({ ingredient_id, d }));
   await tx.query(
@@ -510,8 +532,8 @@ export async function sendRound(staff: Staff, checkId: string, opts: { held?: bo
   const db = await getDb();
   return db.tx(async (tx) => {
     const check = await editableCheck(tx, staff.business_id, checkId);
-    const drafts = await tx.query<{ id: string; product_id: string | null; qty: number; station: string }>(
-      "select id, product_id, qty, station from check_items where check_id = $1 and status = 'draft' and held = $2",
+    const drafts = await tx.query<{ id: string; product_id: string | null; qty: number; station: string; modifiers: Mod[] }>(
+      "select id, product_id, qty, station, modifiers from check_items where check_id = $1 and status = 'draft' and held = $2",
       [checkId, held],
     );
     if (!drafts.length) throw new UserError(held ? "No hay nada retenido" : "No hay nada nuevo para enviar");
@@ -687,10 +709,11 @@ function currentMods(menu: Menu, mods: Mod[]): Mod[] {
 /** Otra ronda igual: lo de esa ronda (sin lo anulado) vuelve a "Por enviar" al precio de hoy, para revisarlo y enviarlo. */
 export async function repeatRound(staff: Staff, checkId: string, round: number) {
   if (!Number.isInteger(Number(round)) || Number(round) < 1) throw new UserError("Elige una ronda enviada");
-  const menu = await loadMenu(staff.business_id);
+  const full = await loadMenu(staff.business_id);
   const db = await getDb();
   return db.tx(async (tx) => {
-    await editableCheck(tx, staff.business_id, checkId);
+    const check = await editableCheck(tx, staff.business_id, checkId);
+    const menu = menuForChannel(full, channelOfCheck(check));
     const lines = await tx.query<{ product_id: string | null; name: string; qty: number; modifiers: Mod[]; note: string; allergy: boolean; seat: number | null }>(
       "select product_id, name, qty, modifiers, note, allergy, seat from check_items where check_id = $1 and round = $2 and status in ('sent','ready','delivered') order by created_at, id",
       [checkId, Math.floor(Number(round))],

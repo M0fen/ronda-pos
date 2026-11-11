@@ -168,6 +168,26 @@ const CATEGORIES = [
   { key: "cervezas", name: "Cervezas", color: "#B07800", station: "barra" },
 ];
 
+/** Lo que gasta cada opción: así "Tocineta" descuenta su tocineta y suma a lo que cuesta el plato */
+const MOD_RECIPES: Record<string, [string, number][]> = {
+  "bebida:Coca-Cola": [["coca", 1]],
+  "bebida:Coca-Cola sin azúcar": [["coca-zero", 1]],
+  "adiciones:Tocineta": [["tocineta", 30]],
+  "adiciones:Queso cheddar": [["cheddar", 1]],
+  "adiciones:Carne smash": [["smash", 1]],
+  "adiciones:Salsa de queso": [["salsa-queso", 40]],
+  "preparacion:Michelada": [["limon", 1]],
+};
+const MOD_CODE: Record<string, string> = { salsa: "SAL", barbacoa: "BBQ", bebida: "BEB", adiciones: "ADI", preparacion: "PRE" };
+
+/** Las opciones sembradas llevan su id y su grupo, como las que guarda la caja: así descuentan su receta y se editan */
+function withOptionIds(mods: Mods | undefined, id: (kind: string, key: string) => string): Mods {
+  return (mods ?? []).map((m) => {
+    const g = MOD_GROUPS.find((x) => x.options.some((o) => o[0] === m.name));
+    return g ? { ...m, id: m.id ?? id("mod", `${g.key}:${m.name}`), group: m.group ?? g.name } : m;
+  });
+}
+
 const MOD_GROUPS = [
   { key: "salsa", name: "Salsa", min: 1, max: 1, options: [["De la casa", 0, true], ["Queso", 0], ["BBQ", 0], ["Ahumada", 0], ["Rosada", 0]] },
   { key: "barbacoa", name: "Barbacoa", min: 1, max: 1, options: [["Clásica", 0, true], ["Dulce picante", 0]] },
@@ -225,8 +245,9 @@ const PRODUCTS: P[] = [
   { key: "mega-burger", cat: "burgers", name: "Mega burger doble carne", price: 43500, desc: "Doble carne artesanal, doble queso americano, tomate, lechuga y salsa de la casa.", mods: ["adiciones"], recipe: [["carne", 2], ["pan", 1], ["cheddar", 2], ["verduras", 40], ["salsas", 25]] },
   { key: "umami", cat: "burgers", name: "Umami burger", price: 45500, desc: "Doble smash, queso glaseado en mermelada de rocoto ahumado, tocineta, doble cheddar y papa fosforito.", mods: ["adiciones"], recipe: [...smash2, ["papa", 40]] },
   { key: "clasica-papas", cat: "burgers", name: "Burger clásica con papas", price: 38000, desc: "Con mozzarella, tomate, lechuga y la salsa que elijas.", mods: ["salsa"], recipe: [...burger, ["papa", 200]] },
-  { key: "combo-burger", cat: "combos", name: "Combo burger + papas + Coca-Cola", price: 50500, mods: ["bebida"], recipe: [...burger, ["papa", 200], ["coca", 1]], fav: true },
-  { key: "combo-smash", cat: "combos", name: "Combo smash doble + papas + bebida", price: 52000, mods: ["bebida"], recipe: [...smash2, ["papa", 200], ["coca", 1]] },
+  // La lata la descuenta la bebida elegida (con o sin azúcar), no el combo
+  { key: "combo-burger", cat: "combos", name: "Combo burger + papas + Coca-Cola", price: 50500, mods: ["bebida"], recipe: [...burger, ["papa", 200]], fav: true },
+  { key: "combo-smash", cat: "combos", name: "Combo smash doble + papas + bebida", price: 52000, mods: ["bebida"], recipe: [...smash2, ["papa", 200]] },
   { key: "combo-pareja", cat: "combos", name: "2 burgers, 2 papas y 2 bebidas", price: 77000, desc: "Para dos.", recipe: [["carne", 2], ["pan", 2], ["mozzarella", 80], ["verduras", 80], ["salsas", 40], ["papa", 400], ["coca", 2]] },
   { key: "coca", cat: "bebidas", name: "Coca-Cola lata", price: 5000, recipe: [["coca", 1]], fav: true },
   { key: "coca-zero", cat: "bebidas", name: "Coca-Cola sin azúcar lata", price: 5000, recipe: [["coca-zero", 1]] },
@@ -975,9 +996,18 @@ async function seedSede(db: Tx, s: Sede, order: number) {
   await bulkInsert(
     db,
     "modifiers",
-    [["id", "uuid"], ["business_id", "uuid"], ["group_id", "uuid"], ["name", "text"], ["price", "int"], ["is_default", "boolean"], ["sort", "int"]],
+    [["id", "uuid"], ["business_id", "uuid"], ["group_id", "uuid"], ["name", "text"], ["price", "int"], ["is_default", "boolean"], ["sort", "int"], ["code", "text"]],
     MOD_GROUPS.flatMap((g) =>
-      g.options.map((o, i) => ({ id: id("mod", `${g.key}:${o[0]}`), business_id: biz, group_id: id("mg", g.key), name: o[0], price: o[1], is_default: o.length > 2 && !!o[2], sort: i })),
+      g.options.map((o, i) => ({
+        id: id("mod", `${g.key}:${o[0]}`),
+        business_id: biz,
+        group_id: id("mg", g.key),
+        name: o[0],
+        price: o[1],
+        is_default: o.length > 2 && !!o[2],
+        sort: i,
+        code: `${MOD_CODE[g.key]}-${i + 1}`,
+      })),
     ),
   );
 
@@ -985,7 +1015,22 @@ async function seedSede(db: Tx, s: Sede, order: number) {
   await bulkInsert(
     db,
     "products",
-    [["id", "uuid"], ["business_id", "uuid"], ["category_id", "uuid"], ["name", "text"], ["description", "text"], ["price", "int"], ["happy_price", "int"], ["tax_rate", "numeric"], ["station", "text"], ["favorite", "boolean"], ["sort", "int"]],
+    [
+      ["id", "uuid"],
+      ["business_id", "uuid"],
+      ["category_id", "uuid"],
+      ["name", "text"],
+      ["description", "text"],
+      ["price", "int"],
+      ["happy_price", "int"],
+      ["tax_rate", "numeric"],
+      ["station", "text"],
+      ["favorite", "boolean"],
+      ["sort", "int"],
+      ["code", "text"],
+      ["channel_prices", "jsonb"],
+      ["hidden_channels", "jsonb"],
+    ],
     PRODUCTS.map((p, i) => ({
       id: id("prod", p.key),
       business_id: biz,
@@ -998,6 +1043,10 @@ async function seedSede(db: Tx, s: Sede, order: number) {
       station: p.station ?? cats.get(p.cat)!.station,
       favorite: !!p.fav,
       sort: i,
+      // El mismo código en todas las sedes; en Rappi la comida sube un 15 % (redondeado a $500) y la cerveza no se ofrece
+      code: `SP-${String(i + 1).padStart(3, "0")}`,
+      channel_prices: p.cat === "cervezas" ? {} : { rappi: Math.round((p.price * 1.15) / 500) * 500 },
+      hidden_channels: p.cat === "cervezas" ? ["rappi", "didi"] : [],
     })),
   );
   await bulkInsert(
@@ -1033,6 +1082,12 @@ async function seedSede(db: Tx, s: Sede, order: number) {
     "recipe_items",
     [["business_id", "uuid"], ["product_id", "uuid"], ["ingredient_id", "uuid"], ["qty", "numeric"]],
     PRODUCTS.flatMap((p) => (p.recipe ?? []).map(([ing, qty]) => ({ business_id: biz, product_id: id("prod", p.key), ingredient_id: id("ing", ing), qty }))),
+  );
+  await bulkInsert(
+    db,
+    "modifier_recipe_items",
+    [["business_id", "uuid"], ["modifier_id", "uuid"], ["ingredient_id", "uuid"], ["qty", "numeric"]],
+    Object.entries(MOD_RECIPES).flatMap(([key, items]) => items.map(([ing, qty]) => ({ business_id: biz, modifier_id: id("mod", key), ingredient_id: id("ing", ing), qty }))),
   );
 }
 
@@ -1225,7 +1280,7 @@ async function seedSedeActivity(db: Tx, s: Sede, now: Date) {
           name: l.prod.name,
           unit_price: l.prod.price,
           qty: l.qty,
-          modifiers: l.mods,
+          modifiers: withOptionIds(l.mods, id),
           note: "",
           station: stationOf(l.prod),
           tax_rate: 8,
@@ -1521,7 +1576,7 @@ async function seedLiveService(db: Tx, s: Sede, now: Date, firstNumber: number, 
         name: prod.name,
         unit_price: prod.price,
         qty: it.qty,
-        modifiers: it.mods ?? [],
+        modifiers: withOptionIds(it.mods, id),
         note: it.note ?? "",
         station: stationOf(prod),
         tax_rate: 8,

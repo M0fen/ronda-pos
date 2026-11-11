@@ -4,6 +4,7 @@ import { OrderScreen } from "@/components/order/order-screen";
 import { authorizersOf, can, requireStaff } from "@/lib/server/auth";
 import { getBusiness } from "@/lib/server/business";
 import { floorState, loadCheck, staffOptions } from "@/lib/server/checks";
+import { channelOfCheck, menuForChannel } from "@/lib/core/channels";
 import { loadMenu } from "@/lib/server/menu";
 
 export const metadata: Metadata = { title: "Cuenta" };
@@ -32,7 +33,8 @@ export default async function CheckPage({ params }: { params: Promise<{ id: stri
   return (
     <OrderScreen
       check={check}
-      menu={menu}
+      // La carta del canal de la cuenta: en un domicilio de Rappi, lo de Rappi y a su precio
+      menu={menuForChannel(menu, channelOfCheck(check))}
       freeTables={floor.tables.filter((t) => !t.check).map((t) => ({ id: t.id, name: t.name, zone: floor.zones.find((z) => z.id === t.zone_id)?.name ?? "" }))}
       perms={{ voidSent: can.voidSent(staff), manage: can.manage(staff), charge: can.charge(staff) }}
       rules={{ discountLimitPct: biz.settings.alerts.discountLimitPct, loyaltyGoal: biz.settings.loyalty.goal, reward: biz.settings.loyalty.reward, loyalty: biz.settings.loyalty.enabled }}

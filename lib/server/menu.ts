@@ -1,4 +1,5 @@
 import "server-only";
+import { cleanChannelPrices, cleanHiddenChannels, type PriceChannel, type SaleChannel } from "../core/channels";
 import { effectivePrice, isHappyHour } from "../core/time";
 import { getBusiness } from "./business";
 import { getDb } from "./db";
@@ -9,6 +10,8 @@ export interface MenuOption {
   name: string;
   price: number;
   isDefault: boolean;
+  code: string | null;
+  soldOut: boolean;
 }
 
 export interface MenuGroup {
@@ -36,6 +39,12 @@ export interface MenuProduct {
   active: boolean;
   favorite: boolean;
   groups: string[];
+  /** Código del producto (la DIAN y Rappi lo piden); el mismo en todas las sedes */
+  code: string | null;
+  /** Precio propio en para llevar y en cada plataforma; sin él, el del local */
+  channelPrices: Partial<Record<PriceChannel, number>>;
+  /** Canales donde no se ofrece */
+  hiddenChannels: SaleChannel[];
 }
 
 export interface MenuCategory {
@@ -71,14 +80,17 @@ export async function loadMenu(bizId: string, opts: { includeInactive?: boolean 
       sold_out: boolean;
       active: boolean;
       favorite: boolean;
+      code: string | null;
+      channel_prices: unknown;
+      hidden_channels: unknown;
     }>(
-      `select id, category_id, name, description, price, happy_price, tax_rate, station, image, sold_out, active, favorite
+      `select id, category_id, name, description, price, happy_price, tax_rate, station, image, sold_out, active, favorite, code, channel_prices, hidden_channels
          from products where business_id = $1 ${opts.includeInactive ? "" : "and active"} order by sort, name`,
       [bizId],
     ),
     db.query<{ id: string; name: string; min_select: number; max_select: number }>("select id, name, min_select, max_select from modifier_groups where business_id = $1 order by sort", [bizId]),
-    db.query<{ id: string; group_id: string; name: string; price: number; is_default: boolean }>(
-      "select id, group_id, name, price, is_default from modifiers where business_id = $1 order by sort",
+    db.query<{ id: string; group_id: string; name: string; price: number; is_default: boolean; code: string | null; sold_out: boolean }>(
+      "select id, group_id, name, price, is_default, code, sold_out from modifiers where business_id = $1 order by sort",
       [bizId],
     ),
     db.query<{ product_id: string; group_id: string }>(
@@ -88,7 +100,7 @@ export async function loadMenu(bizId: string, opts: { includeInactive?: boolean 
   ]);
   const groupMap: Record<string, MenuGroup> = {};
   for (const g of groups) groupMap[g.id] = { id: g.id, name: g.name, min: g.min_select, max: g.max_select, options: [] };
-  for (const o of options) groupMap[o.group_id]?.options.push({ id: o.id, name: o.name, price: o.price, isDefault: o.is_default });
+  for (const o of options) groupMap[o.group_id]?.options.push({ id: o.id, name: o.name, price: o.price, isDefault: o.is_default, code: o.code, soldOut: o.sold_out });
   const byProduct = new Map<string, string[]>();
   for (const l of links) byProduct.set(l.product_id, [...(byProduct.get(l.product_id) ?? []), l.group_id]);
   return {
@@ -114,6 +126,9 @@ export async function loadMenu(bizId: string, opts: { includeInactive?: boolean 
         active: p.active,
         favorite: p.favorite,
         groups: byProduct.get(p.id) ?? [],
+        code: p.code,
+        channelPrices: cleanChannelPrices(p.channel_prices),
+        hiddenChannels: cleanHiddenChannels(p.hidden_channels),
       };
     }),
   };
@@ -137,7 +152,9 @@ export function priceItem(menu: Menu, item: ChosenItem) {
     const group = menu.groups[gid];
     if (!group) continue;
     const picked = group.options.filter((o) => chosen.has(o.id));
-    const final = picked.length === 0 && group.min > 0 ? group.options.filter((o) => o.isDefault).slice(0, group.min) : picked.slice(0, group.max);
+    const out = picked.find((o) => o.soldOut);
+    if (out) throw new UserError(`${out.name} está agotado: elige otra opción`);
+    const final = picked.length === 0 && group.min > 0 ? group.options.filter((o) => o.isDefault && !o.soldOut).slice(0, group.min) : picked.slice(0, group.max);
     for (const o of final) modifiers.push({ name: o.name, price: o.price, id: o.id, group: group.name });
   }
   return {

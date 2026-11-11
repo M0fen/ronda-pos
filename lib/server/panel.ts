@@ -1,5 +1,6 @@
 import "server-only";
 import QRCode from "qrcode";
+import { cleanChannelPrices, cleanCode, cleanHiddenChannels } from "../core/channels";
 import { mergeSettings, type Settings } from "../settings";
 import { pinHash } from "../seed";
 import { normalizePhone } from "../utils";
@@ -11,7 +12,20 @@ import { UserError } from "./errors";
 export async function updateProduct(
   staff: Staff,
   productId: string,
-  patch: { name?: string; price?: number; happyPrice?: number | null; soldOut?: boolean; active?: boolean; description?: string; favorite?: boolean; categoryId?: string; station?: string },
+  patch: {
+    name?: string;
+    price?: number;
+    happyPrice?: number | null;
+    soldOut?: boolean;
+    active?: boolean;
+    description?: string;
+    favorite?: boolean;
+    categoryId?: string;
+    station?: string;
+    code?: string | null;
+    channelPrices?: Record<string, number>;
+    hiddenChannels?: string[];
+  },
 ) {
   // Marcar agotado lo puede hacer cualquiera del equipo; el resto, el encargado
   const onlyStock = Object.keys(patch).every((k) => k === "soldOut");
@@ -51,6 +65,21 @@ export async function updateProduct(
       if (happy !== null && happy >= price) throw new UserError("El precio de happy hour tiene que ser menor que el precio normal");
       await tx.query("update products set happy_price = $2 where id = $1", [productId, happy]);
     }
+    if (patch.code !== undefined) {
+      const code = cleanCode(patch.code);
+      if (code === "") throw new UserError("El código solo lleva letras, números, punto o guion (hasta 30)");
+      if (code) {
+        const taken = await tx.one<{ name: string }>("select name from products where business_id = $1 and lower(code) = lower($2) and id <> $3", [staff.business_id, code, productId]);
+        if (taken) throw new UserError(`El código ${code} ya lo tiene ${taken.name}`);
+      }
+      await tx.query("update products set code = $2 where id = $1", [productId, code]);
+    }
+    if (patch.channelPrices !== undefined) {
+      const prices = cleanChannelPrices(patch.channelPrices);
+      await tx.query("update products set channel_prices = $2::jsonb where id = $1", [productId, JSON.stringify(prices)]);
+      await audit(tx, staff.business_id, staff.id, "channel_prices", { product: p.name, prices });
+    }
+    if (patch.hiddenChannels !== undefined) await tx.query("update products set hidden_channels = $2::jsonb where id = $1", [productId, JSON.stringify(cleanHiddenChannels(patch.hiddenChannels))]);
     if (patch.soldOut !== undefined) await tx.query("update products set sold_out = $2 where id = $1", [productId, patch.soldOut]);
     if (patch.active !== undefined) await tx.query("update products set active = $2 where id = $1", [productId, patch.active]);
     if (patch.favorite !== undefined) await tx.query("update products set favorite = $2 where id = $1", [productId, patch.favorite]);

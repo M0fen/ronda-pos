@@ -1,4 +1,5 @@
 import "server-only";
+import { menuForChannel } from "../core/channels";
 import { checkTotals } from "../core/pricing";
 import { audit, bump, getBusiness, type Business, nextNumber } from "./business";
 import { checkLabel, loadCheck, moveStock, totalsFor, type Mod } from "./checks";
@@ -67,7 +68,8 @@ export async function submitQrOrder(qrToken: string, items: ChosenItem[], guestN
   if (!(await allow("qr-order-ip", 80, 10 * 60_000))) throw new UserError("Hay demasiados pedidos desde esta red. Llama al mesero.");
   if (!table.business.settings.qr.enabled) throw new UserError("El pedido por QR está apagado en este momento");
   if (!items.length) throw new UserError("Agrega algo a tu pedido");
-  const menu = await loadMenu(table.business_id);
+  // La carta QR: sin lo que el local no ofrece por QR
+  const menu = menuForChannel(await loadMenu(table.business_id), "qr");
   const lines = items.slice(0, 20).map((i) => {
     if (!menu.products.some((p) => p.id === i.productId)) throw new UserError("Algo de tu pedido ya no está en la carta: lo quitamos, revisa y vuelve a enviarlo.", { missing: String(i.productId) });
     const line = priceItem(menu, i);
@@ -174,7 +176,7 @@ async function acceptRequest(tx: Tx, bizId: string, requestId: string, actor: St
       number = row!.number;
     }
     const round = await tx.one<{ r: number }>("select coalesce(max(round), 0) + 1 as r from check_items where check_id = $1", [checkId]);
-    const sent: { product_id: string; qty: number }[] = [];
+    const sent: { product_id: string; qty: number; modifiers: Mod[] }[] = [];
     for (const it of req.payload.items ?? []) {
       if (!menu.products.some((p) => p.id === it.productId)) throw new UserError("Uno de los productos ya no está en la carta: rechaza el pedido y tómalo de nuevo");
       const line = priceItem(menu, { productId: it.productId, qty: it.qty, modifierIds: it.modifierIds, note: it.note });
@@ -186,7 +188,7 @@ async function acceptRequest(tx: Tx, bizId: string, requestId: string, actor: St
          values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, 'sent', $11, 'qr', $12, now())`,
         [bizId, checkId, line.product.id, line.product.name, unit, line.qty, JSON.stringify(line.modifiers), line.note, line.product.station, line.product.taxRate, round!.r, actor?.id ?? null],
       );
-      sent.push({ product_id: line.product.id, qty: line.qty });
+      sent.push({ product_id: line.product.id, qty: line.qty, modifiers: line.modifiers });
     }
     await moveStock(tx, bizId, sent, -1, "venta", `Cuenta ${number}`, actor?.id ?? null);
     // Una ronda nueva quita la pre-cuenta: la mesa sigue pidiendo
@@ -203,7 +205,7 @@ async function acceptRequest(tx: Tx, bizId: string, requestId: string, actor: St
 /** El mesero aprueba el pedido del QR: entra directo a barra y cocina como una ronda nueva. */
 export async function approveRequest(staff: Staff, requestId: string) {
   // La carta se carga antes: dentro de la transacción solo se usa tx (PGlite tiene una sola conexión)
-  const menu = await loadMenu(staff.business_id);
+  const menu = menuForChannel(await loadMenu(staff.business_id), "qr");
   const db = await getDb();
   return db.tx(async (tx) => {
     const checkId = await acceptRequest(tx, staff.business_id, requestId, staff, menu);

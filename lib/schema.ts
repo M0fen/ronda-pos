@@ -500,4 +500,25 @@ create index checks_split on checks (split_of) where split_of is not null;
       await tx.query("create unique index checks_one_open_table on checks (table_id) where status in ('open','bill') and table_id is not null and split_of is null");
     },
   },
+  {
+    // Carta en capas: código por producto y por opción (la DIAN y Rappi lo piden), opciones con receta que descuentan
+    // insumos y se agotan, y precio y visibilidad por canal (para llevar, Rappi, DiDi, domicilio propio y carta QR)
+    version: 6,
+    sql: `
+alter table products add column code text;
+alter table products add column channel_prices jsonb not null default '{}'::jsonb;
+alter table products add column hidden_channels jsonb not null default '[]'::jsonb;
+alter table modifiers add column code text;
+alter table modifiers add column sold_out boolean not null default false;
+create table modifier_recipe_items (
+  business_id uuid not null references businesses(id) on delete cascade,
+  modifier_id uuid not null references modifiers(id) on delete cascade,
+  ingredient_id uuid not null references ingredients(id) on delete cascade,
+  qty numeric(12,2) not null check (qty > 0),
+  primary key (modifier_id, ingredient_id)
+);
+create unique index products_code_unique on products (business_id, lower(code)) where code is not null;
+create unique index modifiers_code_unique on modifiers (business_id, lower(code)) where code is not null;
+`,
+  },
 ];
