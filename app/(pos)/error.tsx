@@ -2,12 +2,22 @@
 
 import Link from "next/link";
 import { useEffect } from "react";
+import { ConnectionLost, isConnectionError } from "@/components/offline-notice";
 import { btn } from "@/components/ui";
 
 /** Dentro del sistema del equipo: el menú de arriba sigue a mano y hay salida al salón. */
 export default function PosError({ error, retry }: { error: unknown; retry: () => void }) {
   useEffect(() => console.error(error), [error]);
   const digest = error instanceof Error ? (error as Error & { digest?: string }).digest : undefined;
+  if (isConnectionError(error))
+    return (
+      <div className="mx-auto flex max-w-md flex-col gap-4 py-16 text-center">
+        <ConnectionLost retry={retry} />
+        <button className={btn("primary", "lg")} onClick={() => retry()}>
+          Intentar de nuevo
+        </button>
+      </div>
+    );
   return (
     <div className="mx-auto flex max-w-md flex-col gap-4 py-16 text-center">
       <h1 className="text-2xl font-bold">Esta pantalla no cargó</h1>

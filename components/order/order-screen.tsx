@@ -15,6 +15,7 @@ import {
   Pause,
   Percent,
   Play,
+  Printer,
   Receipt,
   Repeat2,
   Search,
@@ -349,6 +350,13 @@ export function OrderScreen({
               {list[0]?.sent_at ? ` · ${fmtTime(list[0].sent_at)}` : ""}
               {list.some((i) => i.source === "qr") ? " · por QR" : ""}
             </span>
+            <Link
+              href={`/comanda/${check.id}?ronda=${round}&auto=1`}
+              className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-balcon hover:bg-balcon-soft"
+              aria-label={`Imprimir la comanda de la ronda ${round}`}
+            >
+              <Printer size={14} /> Comanda
+            </Link>
             {list.some((i) => i.status !== "void") ? (
               <button className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-balcon hover:bg-balcon-soft" disabled={pending} onClick={() => repeat(round)} aria-label={`Repetir la ronda ${round}`}>
                 <Repeat2 size={14} /> Repetir
@@ -527,7 +535,7 @@ export function OrderScreen({
         </button>
       </div>
       {panelOpen ? (
-        <div className="fixed inset-0 z-50 flex flex-col bg-papel md:hidden" role="dialog" aria-modal="true" aria-label="Cuenta">
+        <div className="fixed inset-x-0 top-(--offline-h,0px) bottom-0 z-50 flex flex-col bg-papel md:hidden" role="dialog" aria-modal="true" aria-label="Cuenta">
           <div className="flex justify-end px-2 pt-2">
             <button className="flex size-10 items-center justify-center rounded-full hover:bg-tinto/6" onClick={() => setPanelOpen(false)} aria-label="Cerrar cuenta">
               <X size={20} />

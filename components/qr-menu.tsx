@@ -121,7 +121,7 @@ export function QrMenu({
 
       {tab === "carta" ? (
         <>
-          <nav className="scrollbar-none sticky top-0 z-20 flex gap-1.5 overflow-x-auto bg-cal/95 px-4 py-3 backdrop-blur">
+          <nav className="scrollbar-none sticky top-(--offline-h,0px) z-20 flex gap-1.5 overflow-x-auto bg-cal/95 px-4 py-3 backdrop-blur">
             {menu.categories.map((c) => (
               <button key={c.id} onClick={() => setCat(c.id)} className={cn("shrink-0 rounded-full px-4 py-2 text-sm font-semibold", cat === c.id ? "bg-tinto text-cal" : "bg-papel ring-1 ring-linea")}>
                 {c.name}

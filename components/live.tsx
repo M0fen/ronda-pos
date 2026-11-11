@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { pulseAction } from "@/app/(pos)/actions";
+import { reportNet } from "@/components/offline-notice";
 
 /**
  * Mantiene la pantalla al día: pregunta cada pocos segundos si algo cambió en el local y, si cambió,
@@ -23,6 +24,7 @@ export function Live({ every = 3000, onChange, refresh = true }: { every?: numbe
         try {
           const v = await pulseAction();
           setOnline(true);
+          reportNet(true);
           if (v === -1) {
             router.replace("/entrar?sesion=1");
             return;
@@ -35,6 +37,7 @@ export function Live({ every = 3000, onChange, refresh = true }: { every?: numbe
           version.current = v;
         } catch {
           setOnline(false);
+          reportNet(false);
           wait = every;
         }
       } else if (navigator.onLine === false) setOnline(false);
@@ -42,7 +45,8 @@ export function Live({ every = 3000, onChange, refresh = true }: { every?: numbe
     };
     tick();
     const touch = () => (wait = every);
-    const wake = () => document.visibilityState === "visible" && refresh && router.refresh();
+    // Sin red no se recarga al despertar: la recarga fallida reemplazaría la pantalla por la del navegador
+    const wake = () => document.visibilityState === "visible" && refresh && navigator.onLine !== false && router.refresh();
     document.addEventListener("visibilitychange", wake);
     window.addEventListener("pointerdown", touch, { passive: true });
     return () => {

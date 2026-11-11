@@ -47,6 +47,8 @@
     color: var(--color-tinto);
     font-family: var(--font-sans);
     font-size: 16px;
+    /* El aviso de "Sin conexión" corre la pantalla hacia abajo en lugar de taparla (lo pone OfflineNotice) */
+    padding-top: var(--offline-h, 0px);
   }
 
   ::selection {
@@ -310,6 +312,7 @@
 @media print {
   body {
     background: #fff;
+    padding-top: 0;
   }
   .no-print {
     display: none !important;

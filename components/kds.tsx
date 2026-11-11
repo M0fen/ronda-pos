@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Ban, Bike, Check, CheckCheck, ChevronRight, Clock, ListOrdered, PackageCheck, Pause, QrCode, RotateCcw, TriangleAlert, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, Ban, Bike, Check, CheckCheck, ChevronRight, Clock, ListOrdered, PackageCheck, Pause, Printer, QrCode, RotateCcw, TriangleAlert, Volume2, VolumeX, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
@@ -288,7 +288,7 @@ export function Kds({
 
   return (
     <div className="min-h-dvh bg-noche text-cal">
-      <header className="sticky top-0 z-30 flex flex-wrap items-center gap-3 border-b border-white/10 bg-noche/95 px-3 py-2.5 backdrop-blur sm:px-5">
+      <header className="sticky top-(--offline-h,0px) z-30 flex flex-wrap items-center gap-3 border-b border-white/10 bg-noche/95 px-3 py-2.5 backdrop-blur sm:px-5">
         <Link href="/salon" className="flex size-10 items-center justify-center rounded-xl hover:bg-white/10" aria-label="Volver al salón">
           <ArrowLeft size={20} />
         </Link>
@@ -476,7 +476,7 @@ export function Kds({
         </aside>
       </div>
 
-      <DetailSheet detail={detail} onClose={() => setDetail(null)} />
+      <DetailSheet detail={detail} station={station} onClose={() => setDetail(null)} />
     </div>
   );
 }
@@ -557,7 +557,7 @@ function ago(now: number, at: string) {
 const STATUS_LABEL: Record<string, string> = { open: "Abierta", bill: "Pidió la cuenta", paid: "Pagada", void: "Descartada", merged: "Unida a otra" };
 
 /** La cuenta completa para barra y cocina: quién la atiende, cuántos son, las rondas, lo retenido y lo que ha pasado. */
-function DetailSheet({ detail, onClose }: { detail: { checkId: string; data: KdsDetail | null } | null; onClose: () => void }) {
+function DetailSheet({ detail, station, onClose }: { detail: { checkId: string; data: KdsDetail | null } | null; station: string | null; onClose: () => void }) {
   const d = detail?.data;
   return (
     <Sheet open={!!detail} onClose={onClose} title={d ? `${d.label} · #${d.number}` : "Cuenta"} dark wide>
@@ -603,9 +603,18 @@ function DetailSheet({ detail, onClose }: { detail: { checkId: string; data: Kds
           ) : null}
           {d.rounds.map((r) => (
             <section key={r.round}>
-              <h3 className="mb-1.5 text-sm font-bold text-cal/80">
-                Ronda {r.round}
-                {r.sentAt ? ` · ${fmtTime(r.sentAt)}` : ""}
+              <h3 className="mb-1.5 flex items-center gap-2 text-sm font-bold text-cal/80">
+                <span className="flex-1">
+                  Ronda {r.round}
+                  {r.sentAt ? ` · ${fmtTime(r.sentAt)}` : ""}
+                </span>
+                <Link
+                  href={`/comanda/${detail!.checkId}?ronda=${r.round}&de=barra${station ? `&estacion=${station}` : ""}&auto=1`}
+                  className="inline-flex min-h-9 items-center gap-1 rounded-lg px-2.5 font-semibold text-cal/85 hover:bg-white/10"
+                  aria-label={`Imprimir la comanda de la ronda ${r.round}`}
+                >
+                  <Printer size={14} /> Comanda
+                </Link>
               </h3>
               <ul className="space-y-1">
                 {r.items.map((i) => (

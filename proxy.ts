@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySessionToken } from "./lib/session";
 
-const PRIVATE = ["/salon", "/cuenta", "/barra", "/caja", "/panel", "/recibo", "/domicilios"];
+const PRIVATE = ["/salon", "/cuenta", "/barra", "/caja", "/panel", "/recibo", "/domicilios", "/comanda"];
 
 /**
  * Sin sesión, las pantallas del equipo llevan a /entrar. Cada página y acción vuelve a verificar en el servidor.
@@ -24,5 +24,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/|favicon.ico|icon.svg|menu/|shots/).*)"],
+  matcher: ["/((?!_next/|favicon.ico|icon.svg|menu/|shots/|app-icon|app.webmanifest|sw.js).*)"],
 };

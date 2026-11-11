@@ -46,7 +46,7 @@ export function PosNav({
     router.replace("/entrar");
   };
   return (
-    <header className="no-print sticky top-0 z-40 border-b border-linea bg-cal/95 backdrop-blur">
+    <header className="no-print sticky top-(--offline-h,0px) z-40 border-b border-linea bg-cal/95 backdrop-blur">
       <div className="flex h-14 items-center gap-3 px-3 sm:px-4">
         <Link href="/salon" className="hidden shrink-0 text-xl font-extrabold tracking-tight [font-stretch:118%] md:block">
           {whiteLabel ? business : "ronda"}
